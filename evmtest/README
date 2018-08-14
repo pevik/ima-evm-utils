@@ -1,0 +1,190 @@
+evmtest(1)
+==========
+
+
+NAME
+----
+
+evmtest - IMA Regression Testing Utility
+
+SYNOPSIS
+--------
+evmtest <command> [OPTIONS]
+
+DESCRIPTION
+-----------
+
+evmtest can be used to verify various functionalities of IMA. It can also be
+used to check a kernel's configuration and validate compatibility with IMA.
+
+COMMANDS
+--------
+
+ runtest <test name> - Run a specific test
+ runall <configuration> - Run all tests
+
+OPTIONS
+-------
+ -v,--verbose			Verbose mode
+ -h,--help			Display help message
+ -i,--image			Kernel image
+ -k,--key			An IMA key
+ -c,--config			Kconfig for kernel build
+ -b,--kernel_build_directory    The path to a kernel build dir
+ --vm				Validate compatibility with a virtual machine
+
+
+
+
+BACKGROUND
+----------
+The Linux kernel needs to be configured properly with a key embedded into the
+kernel and loaded onto the `.builtin_trusted_keys` keyring at boot in order to
+run evmtest.
+
+=== 1. Confirming the kernel is properly configured with IMA enabled.
+
+A number of Kconfig options need to be configured to enable IMA and permit
+evmtest to validate IMA's functionality. (For directions on building a Linux
+kernel with IMA enabled, refer to the wiki[1].)
+To validate the kernel configuration based on its compatibility with IMA, use
+`evmtest runtest r_env_validate`. This can be called with the path to the kernel
+build as an argument, or the -r (--running) flag to validate the running
+kernel's configuration. To use the --running flag, IKCONFIG must be enabled as
+a Kconfig option, either builtin or as a module. An optional argument for this
+script is "--vm". This will check settings related to running the build in a
+virtual machine.
+
+
+=== 2. Creating a local CA Certificate
+
+IMA relies on two keyrings: `.builtin_trusted_keys` and `.ima.`
+`.builtin_trusted_keys` contains the certificate of the ephemeral key generated
+at build time to sign kernel modules. This section will describe the process of
+generating an "IMA local-CA key" to be placed on the same keyring as the
+kernel module signing key. The purpose of the IMA local CA key is to sign keys
+that will be placed on  the `.ima` keyring. These keys will then be used to sign
+files, kernel images, policies, and kernel modules.
+
+TIP: `man evmctl [GENERATE TRUSTED KEYS]` contains the exact commands needed to
+generate the IMA CA keypair, and IMA keypair used for signing files.
+
+Following these instructions should produce these three files:
+
+* `ima-local-ca.x509` - This will be placed on the .builtin_trusted_keys keyring
+
+* `ima-local-ca.priv` - This will be used in signing the IMA key
+
+* `ima-local-ca.pem`  - This will be placed on the  IMA Trusted keyring
+
+The process for creating an IMA key is described in the same section.
+
+Some distribution kernels reserve memory for inserting a certificate post-build.
+The directions in section 3a do not require rebuilding the kernel, just
+resigning it. For kernels which do not reserve memory for a certificate, see
+section 3b.
+
+
+=== 3a. Inserting a local CA certificate post build into the kernel.
+
+The first method for adding a key to the the .builtin_trusted_keys keyring is
+adding it to the kernel post-build. The following Kconfig options must be set.
+-------------
+CONFIG_SYSTEM_EXTRA_CERTIFICATE=y
+CONFIG_SYSTEM_TRUSTED_KEYRING=y
+CONFIG_SYSTEM_TRUSTED_KEYS=" "
+-------------
+Navigate to the build, and:
+
+`scripts/insert-sys-cert -b vmlinux -c <path to ima-local-ca.pem>`
+
+Delete both:
+
+* arch/x86/boot/compressed/vmlinux
+
+* arch/x86/boot/bzImage
+
+Remake, install, and sign the kernel.
+When prompted for a key size, allot 4096 bytes.
+
+Boot, the key loading should be visible through dmesg.
+
+
+===  3b. Kernel build method for including a local CA certificate.
+
+The second method for adding a key to the .builtin_trusted_keys keyring is
+to include the certificate during the build. Set these Kconfig options:
+-------------
+CONFIG_SYSTEM_TRUSTED_KEYRING=y
+CONFIG_SYSTEM_TRUSTED_KEYS="<path to ima-local-ca.pem>"
+-------------
+Continue the build as normal, sign, and boot. The key loading should be visible
+through dmesg.
+
+
+=== 4. Boot options for running IMA
+
+When running IMA, and specifically evmtest, it is important to have the
+correct boot options. Boot with: `module.sig_enforce=1`. This tells the kernel
+to prevent the loading of any unsigned modules.
+
+When running evmtest, the kernel should be booted with no policy, however,
+for debugging purposes it may be to useful to boot with:
+`ima_policy=tcb`
+This instructs IMA to load a policy which measures all program's exec'd, files
+mmap'd for exec by any user, and all files opened for read by root (fowner=0).
+More documentation is available in the IMA docs.
+evmtest appends the policy during runtime to test specific behavior. For this
+reason, the builtin policy specified on the boot command line should not be
+replaced with a custom policy during boot.
+
+
+=== 5. Loading a certificate on the IMA trusted keyring
+
+(For key creation, see documentation in man evmctl.)
+
+Depending on the distribution, dracut may be enabled to load keys on the IMA
+keyring. Place the IMA keys in: `/etc/ima/keys`
+Reboot, and assuming dracut is enabled to load IMA keys, the key loading should
+be visible in dmesg. The key should also be visible on the `.ima` keyring.
+Verify using keyctl (`keyctl show %keyring:.ima`) or by cat'ing `/proc/keys`
+
+
+=== FAQ
+For questions regarding IMA see the IMA wiki.
+
+=== 1. What additional settings are needed when testing in a virtual machine?
+
+When building for a virtual machine, use the following Kconfig options:
+------------------
+CONFIG_BLK_MQ_VIRTIO=y
+CONFIG_MEMORY_BALLOON=y
+CONFIG_VIRTIO_BLK=y
+CONFIG_SCSI_VIRTIO=y
+CONFIG_HW_RANDOM_VIRTIO=y
+CONFIG_VIRTIO=y
+CONFIG_VIRTIO_MENU=y
+CONFIG_VIRTIO_PCI=y
+CONFIG_VIRTIO_PCI_LEGACY=y
+CONFIG_VIRTIO_BALLOON=y
+-------------------------
+
+=== 2. How can an IMA key be loaded without rebuilding dracut?
+
+First, get the `.ima` keyring ID:
+-------------------------
+keyctl show %keyring:.ima
+-------------------------
+The ID is the number that appears before the keyring description.
+------------------------------------------------
+evmctl import <path to ima key> <.ima keyring ID>
+------------------------------------------------
+This process can be scripted and added to startup/login
+
+== Reference
+
+1. https://sourceforge.net/p/linux-ima/wiki/Home/
+
+Author
+------
+David Jacobson - davidj@linux.ibm.com

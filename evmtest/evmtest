@@ -1,0 +1,74 @@
+#!/bin/bash
+
+# Initial set up
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )" # Current directory
+# Useful for development
+
+
+# Check to see if we're installed or not
+evmtest=$(type -p evmtest) # Find in path
+if [[ -e "${evmtest}" ]]; then
+	_evmdir=$(dirname ${evmtest})
+	prefix=${_evmdir%%/bin}
+	EVMDIR=${prefix}/share/evmtest
+else
+	EVMDIR=$DIR
+fi
+
+source $EVMDIR/files/common.sh
+usage (){
+	echo "Usage: evmtest [[runtest] <test_name>] [options]"
+	echo ""
+	echo "Tests may be called directly by cd'ing to the evmtest directory:"
+	echo "$ cd $EVMDIR/functions"
+	echo "$ ./<test_name>.sh [arg1] .. [arg2]"
+	echo "Options:"
+	echo "	-h,--help	Displays this help message"
+	echo "Tests available: [R] = Must be run as root"
+	echo ""
+
+	for test in $EVMDIR/functions/*.sh; do
+		test_name=${test/.sh/}
+		test_name=${test_name#$EVMDIR/functions/}
+		if [[ $test_name == r_* ]]; then # r_ = root test
+			root_required="[R]"
+		else
+			root_required="[ ]"
+		fi
+		echo "$root_required $test_name"
+		root_required="" # Reset
+	done
+}
+
+runtest (){
+	local test_name=$1
+	shift # Drop test_name
+
+	if [[ ! -e $EVMDIR/functions/$test_name.sh ]]; then
+		echo "[!] Test: "$test_name" not found"
+		usage
+		exit 1
+	else
+		# Invoke test & pass args, let the test parse args itself
+		($EVMDIR/functions/$test_name.sh $@)
+	fi
+}
+
+if [[ "$#" == 0 ]]; then
+	usage
+	exit 1
+elif [[ "$1" == "-h" || $1 == "--help" || $1 == "help" ]]; then
+	usage
+	exit 0
+elif [[ "$1" == "runtest" ]]; then
+	if [[ -z $2 ]]; then
+		echo "[!] Provide a test"
+		exit
+	else
+		shift # Drop runtest
+		runtest $@
+		exit $?
+	fi
+else
+	usage
+fi
