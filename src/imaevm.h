@@ -75,6 +75,7 @@
 #define	DATA_SIZE	4096
 #define SHA1_HASH_LEN   20
 
+#define MAX_DIGEST_NAME		32
 #define MAX_DIGEST_SIZE		64
 #define MAX_SIGNATURE_SIZE	1024
 

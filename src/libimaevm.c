@@ -41,6 +41,7 @@
 /* should we use logger instead for library? */
 #define USE_FPRINTF
 
+#define _GNU_SOURCE
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/stat.h>
@@ -56,6 +57,7 @@
 #include <openssl/pem.h>
 #include <openssl/evp.h>
 #include <openssl/x509.h>
+#include <openssl/engine.h>
 #include <openssl/err.h>
 
 #include "imaevm.h"
@@ -70,8 +72,8 @@ const char *const pkey_hash_algo[PKEY_HASH__LAST] = {
 	[PKEY_HASH_SHA384]	= "sha384",
 	[PKEY_HASH_SHA512]	= "sha512",
 	[PKEY_HASH_SHA224]	= "sha224",
-	[PKEY_HASH_STREEBOG_256] = "streebog256",
-	[PKEY_HASH_STREEBOG_512] = "streebog512",
+	[PKEY_HASH_STREEBOG_256] = "md_gost12_256,streebog256",
+	[PKEY_HASH_STREEBOG_512] = "md_gost12_512,streebog512",
 };
 
 /*
@@ -284,6 +286,35 @@ static int add_dev_hash(struct stat *st, EVP_MD_CTX *ctx)
 	return !EVP_DigestUpdate(ctx, &dev, sizeof(dev));
 }
 
+/* Call EVP_get_digestbyname with provided name and with alias,
+ * which is first name in the comma separated list of names
+ * in pkey_hash_algo.
+ */
+static const EVP_MD *get_digestbyname(const char *name)
+{
+	const EVP_MD *md;
+
+	md = EVP_get_digestbyname(params.hash_algo);
+	if (!md) {
+		char alias[MAX_DIGEST_NAME];
+		int len;
+		int algo_id;
+		const char *algo_alias;
+
+		/* try to get algo by its alias */
+		algo_id = get_hash_algo(params.hash_algo);
+		algo_alias = get_hash_algo_by_id(algo_id);
+		len = strchrnul(algo_alias, ',') - algo_alias;
+		if (len < sizeof(alias)) {
+			memcpy(alias, algo_alias, len);
+			alias[len] = '\0';
+			if (strcmp(params.hash_algo, alias))
+				md = EVP_get_digestbyname(alias);
+		}
+	}
+	return md;
+}
+
 int ima_calc_hash(const char *file, uint8_t *hash)
 {
 	const EVP_MD *md;
@@ -305,7 +336,7 @@ int ima_calc_hash(const char *file, uint8_t *hash)
 		return err;
 	}
 
-	md = EVP_get_digestbyname(params.hash_algo);
+	md = get_digestbyname(params.hash_algo);
 	if (!md) {
 		log_err("EVP_get_digestbyname(%s) failed\n", params.hash_algo);
 		return 1;
@@ -561,6 +592,22 @@ static int algocmp(const char *a, const char *b)
 	return *a || *b;
 }
 
+static int strmatch(const char *needle, const char *haystack)
+{
+	int len = strlen(needle);
+	const char *p = haystack;
+	const char *t;
+
+	for (t = strchrnul(p, ','); *p; p = t, t = strchrnul(p, ',')) {
+		if (t - p == len &&
+		    !strncmp(needle, p, len))
+			return 0;
+		if (!*t++)
+			break;
+	}
+	return 1;
+}
+
 int get_hash_algo(const char *algo)
 {
 	int i;
@@ -568,7 +615,7 @@ int get_hash_algo(const char *algo)
 	/* first iterate over builtin algorithms */
 	for (i = 0; i < PKEY_HASH__LAST; i++)
 		if (pkey_hash_algo[i] &&
-		    !strcmp(algo, pkey_hash_algo[i]))
+		    !strmatch(algo, pkey_hash_algo[i]))
 			return i;
 
 	/* iterate over algorithms provided by kernel-headers */
