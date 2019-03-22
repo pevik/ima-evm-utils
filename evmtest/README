@@ -38,6 +38,7 @@ TEST NAMES
 
  env_validate - verify kernel build
  example_test - example test
+ policy_sig - verify loading IMA policies
 
 
 Introduction

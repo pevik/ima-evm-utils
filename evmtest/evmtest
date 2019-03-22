@@ -28,6 +28,7 @@ usage (){
 	# placement of a script in tests/
 	echo "[R]	env_validate"
 	echo "[ ]	examples_test"
+	echo "[R]	policy_sig"
 
 	echo ""
 	echo "Note: Tests may be run directly from the \"tests\" directory"

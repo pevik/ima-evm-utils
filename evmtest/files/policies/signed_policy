@@ -1,0 +1,2 @@
+measure func=POLICY_CHECK
+appraise func=POLICY_CHECK appraise_type=imasig
