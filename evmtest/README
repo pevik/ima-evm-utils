@@ -39,6 +39,7 @@ TEST NAMES
  env_validate - verify kernel build
  example_test - example test
  policy_sig - verify loading IMA policies
+ policy_sig - test IMA-appraise on policies
 
 
 Introduction
@@ -172,6 +173,9 @@ IMA's behavior is dependent on its policy. The policy defines which
 files are measured, appraised, and audited. Without a policy, IMA does
 not do anything.
 
+When running evmtest, boot with: module.sig_enforce=1. This tells the kernel to
+prevent the loading of any unsigned modules.
+
 
 === Methods for defining policy rules
 
@@ -211,6 +215,13 @@ and booted without any appraisal policy rules.
 
 As the regression tests mature and additional tests are defined, the
 regression tests will not make policy assumptions.
+
+
+=== Require kernel module appended signatures
+
+Most kernels are configured with CONFIG_MODULE_SIG enabled but without
+CONFIG_MODULE_SIG_FORCE. For testing purposes, require kernel module appended
+signatures by specifying `module.sig_enforce=1` on the boot command line.
 
 
 FAQ

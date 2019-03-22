@@ -1,0 +1,2 @@
+measure func=MODULE_CHECK
+appraise func=MODULE_CHECK appraise_type=imasig
