@@ -13,6 +13,7 @@ SYNOPSIS
 
 evmtest runtest <test name> [OPTIONS]
 
+evmtest runall <configuration pathname>
 
 DESCRIPTION
 -----------
@@ -34,7 +35,7 @@ OPTIONS
 
 
 TEST NAMES
-----------
+---------
 
  boot_aggregate - verify the IMA boot-aggregate
  env_validate - verify kernel build
@@ -43,6 +44,34 @@ TEST NAMES
  kexec_sig - test IMA-appraise on kexec image loading
  kmod_sig - test IMA-appraise on kernel module loading
  xattr_preserve - test metadata preservation on file move
+
+
+
+CONFIGURATION PATHNAME
+----------------------
+
+The configuration pathname should point to the runall configuration file.
+
+
+=== Configuration File
+
+The evmtest configuration file allows all tests to be run by executing a single
+command. The configuration file contains all the options that needed for
+various tests and allows tests to be run non-interactively, so they can be
+integrated in a larger testing suite.
+
+The `example.conf` file provides a skeleton configuration file, where the only
+variable that *must* be defined is `IMA_KEY`. Defaults are described below.
+
+* `IMA_KEY` - The private key for the certificate on the IMA Trusted Keyring
+
+* `KBUILD_DIR` - Should point to a kernel build tree. If not provided, the test
+will use `/lib/modules/$(uname -r)/build`.
+
+* `KERN_IMAGE` - Should point towards an unsigned kernel image. If not provided,
+the test will attempt to use the running kernel.
+
+* `VERBOSE` - If set to 1, will add -v to all tests run
 
 
 Introduction
