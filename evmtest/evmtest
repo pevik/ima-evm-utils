@@ -26,6 +26,7 @@ usage (){
 	# Any test should be added here manually
 	# The reason this is manual is to prevent the accidental / malicious
 	# placement of a script in tests/
+	echo "[R]	boot_aggregate"
 	echo "[R]	env_validate"
 	echo "[ ]	examples_test"
 	echo "[R]	kexec_sig"

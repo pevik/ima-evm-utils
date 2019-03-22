@@ -36,6 +36,7 @@ OPTIONS
 TEST NAMES
 ----------
 
+ boot_aggregate - verify the IMA boot-aggregate
  env_validate - verify kernel build
  example_test - example test
  policy_sig - verify loading IMA policies
