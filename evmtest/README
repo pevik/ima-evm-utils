@@ -39,7 +39,8 @@ TEST NAMES
  env_validate - verify kernel build
  example_test - example test
  policy_sig - verify loading IMA policies
- policy_sig - test IMA-appraise on policies
+ kexec_sig - test IMA-appraise on kexec image loading
+ kmod_sig - test IMA-appraise on kernel module loading
 
 
 Introduction

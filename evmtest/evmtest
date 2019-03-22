@@ -28,6 +28,7 @@ usage (){
 	# placement of a script in tests/
 	echo "[R]	env_validate"
 	echo "[ ]	examples_test"
+	echo "[R]	kexec_sig"
 	echo "[R]	kmod_sig"
 	echo "[R]	policy_sig"
 
