@@ -36,4 +36,7 @@ rmman:
 
 doc: evmctl.1.html rmman evmctl.1
 
-.PHONY: $(tarname)
+evmtest:
+	$(MAKE) -C evmtest
+
+.PHONY: $(tarname) evmtest

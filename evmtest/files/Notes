@@ -1,0 +1,5 @@
+This file contains a description of the contents of this directory.
+
+1. common.sh
+
+This file contains useful functions and variables for evmtest scripts.

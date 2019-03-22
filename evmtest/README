@@ -1,0 +1,240 @@
+evmtest(1)
+==========
+
+
+NAME
+----
+
+evmtest - Linux integrity subsystem regression testing utility
+
+
+SYNOPSIS
+--------
+
+evmtest runtest <test name> [OPTIONS]
+
+
+DESCRIPTION
+-----------
+
+evmtest is a regression testing framework for testing different aspects of the
+Linux integrity subsystem.
+
+
+OPTIONS
+-------
+
+ -b	<kernel build directory pathname>
+ -c	<kernel config file pathname>
+ -e	<example file pathname>
+ -h	Help
+ -i	<kernel image pathname>
+ -k	<private key pathname>
+ -v	Verbose logging
+
+
+TEST NAMES
+----------
+
+ env_validate - verify kernel build
+ example_test - example test
+
+
+Introduction
+------------
+
+IMA-appraisal verifies a file's integrity based on the information
+stored in the "security.ima" extended attribute (xattr), before the file
+is made accessible to userspace.  The "security.ima" xattr may contain
+either a file hash or a file signature.  However, only immutable files
+may be signed.
+
+The file signatures are verified based on keys loaded onto the `.ima`
+keyring.  To prevent untrusted or unknown keys from being loaded onto
+the `.ima` keyring, only certificates signed by a kernel "builtin" key
+may be loaded onto the `.ima` keyring.  This establishes a signature
+chain of trust from a signed kernel image up to the running system.
+
+
+Confirming the kernel is properly configured
+--------------------------------------------
+
+Several kernel configuration (Kconfig) options need to be enabled in order to
+execute the regression test suite.  To verify these options are enabled,
+either a configuration file may be validated directly or the running
+kernel's configuration may be validated.
+
+To directly validate a kernel's configuration file, execute:
+
+    evmtest runtest r_env_validate -c <Kconfig pathname> [-v]
+
+To validate the running kernel's configuration is properly configured
+requires root privileges.  As root, execute:
+
+    evmtest runtest r_env_validate -r [-v]
+
+
+Creating a local-CA certificate
+-------------------------------
+
+The local-CA's private key is used to sign certificates that are loaded
+onto the `.ima` keyring.  The evmctl manpage provides directions for
+generating the local-CA keypair and for creating the certificate.  Refer
+to the evmctl manpage section named "GENERATE TRUSTED KEYS".
+
+The examples directory contains two sample scripts named
+`ima-gen-local-ca.sh` and `ima-genkey.sh`, for generating these files.
+
+* `ima-local-ca.x509` - Inserted into the Linux kernel, to be loaded onto
+  the "builtin" keyring.
+* `ima-local-ca.priv` - Used for signing the IMA certificate
+* `x509_ima.der`      - Loaded onto the IMA trusted keyring
+
+
+Adding keys to the builtin kernel keyring
+-------------------------------------------
+
+The Linux kernel's `scripts/insert-sys-cert`, included in the kernel
+headers package (eg. kernel-headers, linux-headers), inserts a DER
+encoded certificate into the Linux kernel post build.  This requires
+the kernel to be configured with `CONFIG_SYSTEM_EXTRA_CERTIFICATE`
+enabled to reserve memory for the additional certificate.
+
+Some prebuilt kernel images are configured with this reserved memory.
+For these kernels, after inserting the local-CA public key, the kernel
+only needs to be resigned.  For kernels which do not reserve memory for
+a certificate, the kernel needs to be recompiled and resigned.
+
+
+=== Inserting a local-CA certificate post build into the kernel
+
+upstreamed:     insert-sys-cert -s System.map -b vmlinux -c <local-CA cert>
+posted*:        insert-sys-cert -s System.map -z vmlinuz -c <local-CA cert>
+
+After inserting the certificate with either of these methods, the kernel
+needs to be resigned.
+
+* https://lwn.net/Articles/753487/
+
+
+=== Kernel build method for including a local-CA certificate
+
+The second method for adding a key to the .builtin_trusted_keys keyring is
+to either directly include the certificate during the build, by
+specifying the certificate pathname or by reserving memory for the
+certificate.
+
+==== Kconfig options: including the certificate during build
+ CONFIG_SYSTEM_TRUSTED_KEYRING=y
+ CONFIG_SYSTEM_TRUSTED_KEYS="<path to ima-local-ca.pem>"
+
+==== Kconfig options: reserving memory for the certificate
+ CONFIG_SYSTEM_EXTRA_CERTIFICATE=y
+ CONFIG_SYSTEM_EXTRA_CERTIFICATE_SIZE=4096
+
+
+The latter method allows a generic kernel to be built, initially
+containing a "test" certificate, but released with the "real"
+certificate.
+
+In this kernel build environment, the certificate may be inserted into
+the vmlinux post build, followed by "make" and "sudo make install". The kernel
+image needs to be resigned as usual.
+
+
+Signing the kernel image containing the local-CA certificate
+------------------------------------------------------------
+
+Once the kernel image is built and contains the local-CA certificate,
+sign the kernel image as normal.  A couple of tools exist for signing
+kernel images (eg. pesign and sbsign). Refer to the distro’s
+documentation.
+
+
+Loading signed certificates onto the IMA trusted keyring
+--------------------------------------------------------
+
+The integrity dracut module 98integrity/ima-keys-load.sh loads keys
+stored in /etc/keys/ima directory onto the IMA keyring.  Assuming the
+integrity dracut module is enabled, properly signed keys will be loaded
+onto the IMA keyring on boot.
+
+To view the keys loaded onto the `.ima` keyring, as root execute:
+
+ keyctl show %keyring:.ima
+
+
+Boot command line options
+-------------------------
+
+IMA's behavior is dependent on its policy. The policy defines which
+files are measured, appraised, and audited. Without a policy, IMA does
+not do anything.
+
+
+=== Methods for defining policy rules
+
+* Builtin policies: are specified on the boot command line (eg.
+  ima_policy="tcb|appraise_tcb")
+* Custom policy: is specified by echo'ing the custom policy pathname to
+  <securityfs>/ima/policy
+* Build time policy rules: Kconfig options
+* Architecture specific policy rules: Kconfig option
+
+The "builtin" policies, specified on the boot command line, are enabled
+from boot.  Once the LSMs are initialized, IMA policy rules can be
+defined in terms of LSM labels, allowing for more fine grained policy
+rules to be defined.  The "builtin" policies can be replaced with a
+"custom" policy.
+
+After loading a custom policy, additional rules may extend the
+custom policy, if the kernel is configured with CONFIG_IMA_WRITE_POLICY
+enabled.
+
+Unlike the "builtin" policies, the "build" time policy rules are
+automatically enabled at runtime and continue to persist after loading a
+custom policy.
+
+The "architecture" specific policy rules are derived during kernel boot,
+based on runtime secure boot flags. These are similar to the "build" time
+policies in that they persist after loading a custom policy.
+
+Initially each of the regression tests, first executes without an appraisal
+policy rule and then extends the IMA policy with the specific test rule.
+For this reason, the kernel must be configured with:
+
+ CONFIG_IMA_WRITE_POLICY=y
+ CONFIG_IMA_READ_POLICY=y
+
+and booted without any appraisal policy rules.
+
+As the regression tests mature and additional tests are defined, the
+regression tests will not make policy assumptions.
+
+
+FAQ
+---
+=== 1. How can an IMA key be loaded without rebuilding dracut?
+
+Unlike thread (@t), process (@p), session (@s), user (@u), or group (@g)
+keyrings, loading keys onto a trusted keyring requires searching for the
+keyring id.  The shell command, below, finds and saves the keyring id.
+The subsequent shell command loads a DER encoded key on to the keyring.
+
+ keyring_id=`sudo keyctl describe %keyring:.ima | awk -F ':' '{print $1}';`
+ evmctl import <path to ima key> ${keyring_id}
+
+This process can be scripted and added to startup/login
+
+=== 2. Should verbose mode be used when integrating with a test platform?
+
+When using evmtest inside of a test platform, output should be kept minimal.
+This is accomplished by not using the --verbose option.
+
+== Reference
+
+1. https://sourceforge.net/p/linux-ima/wiki/Home/
+
+Author
+------
+David Jacobson - davidj@linux.ibm.com

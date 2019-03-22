@@ -1,0 +1,11 @@
+Installation Instructions
+-------------------------
+
+Basic Installation
+------------------
+
+From the root directory of ima-evm-utils, run the commands: `./autogen.sh`
+followed by `./configure`. `cd` to evmtest directory, execute `make`, and
+`sudo make install`.
+For details on how to use `evmtest` See the installed manpage or the README.
+There is an evmtest.html provided as well.
