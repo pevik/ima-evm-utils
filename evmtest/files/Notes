@@ -19,3 +19,8 @@ This is a directory that contains IMA policies with self explanatory names.
 This file was generated such that its corresponding public key could be placed
 on the IMA Trusted Keyring, however, it has not. Therefore, any policy (or file)
 signed by this key cannot be verified, and is untrusted.
+
+5. basic_mod.ko
+
+This is a kernel module that logs (to dmesg) the syscall that was used to load
+it.

@@ -3,7 +3,6 @@ TEST="policy_sig"
 # Author: David Jacobson <davidj@linux.ibm.com>
 
 ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null && pwd )/.."
-#shellcheck source=/usr/local/share/evmtest/files/common.sh
 source "$ROOT"/files/common.sh
 
 VERBOSE=0
