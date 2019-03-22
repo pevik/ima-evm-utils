@@ -14,9 +14,13 @@ evmtest.1:
 install:
 	install -m 755 evmtest $(bindir)
 	install -d $(datarootdir)/evmtest/files/
+	install -d $(datarootdir)/evmtest/files/policies
 	install -d $(datarootdir)/evmtest/tests/
-	install -D $$(find ./files/ -not -type d)  $(datarootdir)/evmtest/files/
+	install -D \
+	$$(find ./files/ -not -type d -not -path "./files/policies/*")  \
+	$(datarootdir)/evmtest/files/
 	install -D ./tests/* $(datarootdir)/evmtest/tests/
+	install -D ./files/policies/* $(datarootdir)/evmtest/files/policies/
 	cp evmtest.1 $(datarootdir)/man/man1
 	mandb -q
 
