@@ -68,13 +68,13 @@ elif [ "$1" = "runtest" ]; then
 		runtest "$@"
 		exit $?
 	fi
-elif [ "$1" == "runall" ]; then
+elif [ "$1" = "runall" ]; then
 	if [ -z "$2" ] || [ ! -e "$2" ]; then
 		echo "evmtest runall <config file>"
 		echo "[!] Please provide a config file"
 		exit 1
 	fi
-	source "$2" # Load in config
+	. "$2" # Load in config
 	if [ "$VERBOSE" -eq 1 ]; then
 		V="-v"
 	fi

@@ -4,12 +4,13 @@
 TEST="env_validate"
 ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null && pwd )/.."
 source "$ROOT"/files/common.sh
+VM_VALIDATE=0
 VERBOSE=0
 CONFIG_FILE=""
 
 usage () {
 	echo ""
-	echo "env_validate [-c <config>]|-r] [-vh]"
+	echo "env_validate [-c <config>]|-r] [--vm] [-vh]"
 	echo ""
 	echo "	This test validates that a kernel is properly configured, "
 	echo "	based on either the provided config file or the builtin"
@@ -18,12 +19,13 @@ usage () {
 	echo "	-c	Kernel config file"
 	echo "	-r	Will attempt to pull running config"
 	echo "	-v	Verbose testing"
+	echo "	--vm	Will validate that the build is VM compatible"
 	echo "	-h	Displays this help message"
 	echo ""
 }
 
 parse_args () {
-	TEMP=$(getopt -o 'hc:rv' -n 'env_validate' -- "$@")
+	TEMP=$(getopt -o 'hc:rv' -l "vm" -n 'env_validate' -- "$@")
 	eval set -- "$TEMP"
 
 	while true ; do
@@ -32,6 +34,7 @@ parse_args () {
 		-c) CONFIG="$2"; shift 2;;
 		-r) RUNNING=1; shift;;
 		-v) VERBOSE=1; shift;;
+		--vm) VM_VALIDATE=1; shift;;
 		--) shift; break;;
 		*) echo "[*] Unrecognized option $1"; exit 1 ;;
 		esac
@@ -153,6 +156,22 @@ check_config () {
 	# Module signing configuration
 	validate_defined "CONFIG_MODULE_SIG_KEY"
 	validate "CONFIG_MODULE_SIG" "y"
+
+
+	if [ $VM_VALIDATE == 1 ]; then
+		v_out "Validating VM configuration"
+
+		validate "CONFIG_BLK_MQ_VIRTIO" "y"
+		validate "CONFIG_MEMORY_BALLOON" "y"
+		validate "CONFIG_VIRTIO_BLK" "y"
+		validate "CONFIG_SCSI_VIRTIO" "y"
+		validate "CONFIG_HW_RANDOM_VIRTIO" "y"
+		validate "CONFIG_VIRTIO" "y"
+		validate "CONFIG_VIRTIO_MENU" "y"
+		validate "CONFIG_VIRTIO_PCI" "y"
+		validate "CONFIG_VIRTIO_PCI_LEGACY" "y"
+		validate "CONFIG_VIRTIO_BALLOON" "y"
+	fi
 
 	if [ ${#INVALID_DEFINITION[@]} != 0 ]; then
 		v_out "The following Kconfig variables are incorrectly defined:"
