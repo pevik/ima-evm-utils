@@ -42,6 +42,7 @@ TEST NAMES
  policy_sig - verify loading IMA policies
  kexec_sig - test IMA-appraise on kexec image loading
  kmod_sig - test IMA-appraise on kernel module loading
+ xattr_preserve - test metadata preservation on file move
 
 
 Introduction
