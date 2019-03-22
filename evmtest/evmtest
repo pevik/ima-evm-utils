@@ -16,6 +16,7 @@ fi
 usage (){
 	echo "Usage:"
 	echo "	evmtest runtest <test name> [OPTIONS]"
+	echo "	evmtest	runall <configuration file>"
 	echo
 	echo "Options:"
 	echo "	-h	Displays this help message"
@@ -67,6 +68,57 @@ elif [ "$1" = "runtest" ]; then
 		runtest "$@"
 		exit $?
 	fi
+elif [ "$1" == "runall" ]; then
+	if [ -z "$2" ] || [ ! -e "$2" ]; then
+		echo "evmtest runall <config file>"
+		echo "[!] Please provide a config file"
+		exit 1
+	fi
+	source "$2" # Load in config
+	if [ "$VERBOSE" -eq 1 ]; then
+		V="-v"
+	fi
+
+	# Key is not optional
+	if [ -z "$IMA_KEY" ]; then
+		echo "[*] Please correct your config file"
+		exit 1
+	fi
+
+	EVMTEST_require_root
+	FAIL=0
+	echo "[*] Running tests..."
+	# 1
+	"$EVMDIR"/tests/env_validate.sh -r "$V"
+	FAIL=$((FAIL+$?))
+	# 2
+	if [ -z "$KERN_IMAGE" ]; then
+		"$EVMDIR"/tests/kexec_sig.sh -k "$IMA_KEY" "$V"
+	else
+		"$EVMDIR"/tests/kexec_sig.sh -k "$IMA_KEY" -i \
+			"$KERN_IMAGE" "$V"
+	fi
+	FAIL=$((FAIL+$?))
+	# 3
+	if [ -z "$KBUILD_DIR" ]; then
+		"$EVMDIR"/tests/kmod_sig.sh -k "$IMA_KEY" "$V"
+	else
+		"$EVMDIR"/tests/kmod_sig.sh -b "$KBUILD_DIR" \
+			-k "$IMA_KEY" "$V"
+	fi
+	FAIL=$((FAIL+$?))
+	# 4
+	"$EVMDIR"/tests/policy_sig.sh -k "$IMA_KEY" "$V"
+	FAIL=$((FAIL+$?))
+	# 5
+	"$EVMDIR"/tests/boot_aggregate.sh "$V"
+	FAIL=$((FAIL+$?))
+	# 6
+	"$EVMDIR"/tests/xattr_preserve.sh "$V"
+	FAIL=$((FAIL+$?))
+	echo "..."
+	echo "[*] TESTS PASSED: $((6-FAIL))"
+	echo "[*] TESTS FAILED: $FAIL"
 else
 	usage
 fi
