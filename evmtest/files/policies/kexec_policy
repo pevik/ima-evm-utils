@@ -1,0 +1,3 @@
+appraise func=KEXEC_KERNEL_CHECK appraise_type=imasig
+measure func=KEXEC_KERNEL_CHECK
+audit func=KEXEC_KERNEL_CHECK
