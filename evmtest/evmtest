@@ -32,6 +32,7 @@ usage (){
 	echo "[R]	kexec_sig"
 	echo "[R]	kmod_sig"
 	echo "[R]	policy_sig"
+	echo "[R]	xattr_preserve"
 
 	echo ""
 	echo "Note: Tests may be run directly from the \"tests\" directory"
