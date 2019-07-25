@@ -1,0 +1,186 @@
+#!/bin/bash
+#
+# evmctl ima_sign tests
+#
+# Copyright (C) 2019 Vitaly Chikunov <vt@altlinux.org>
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2, or (at your option)
+# any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+cd $(dirname $0)
+PATH=../src:$PATH
+source ./functions
+_require evmctl openssl xxd getfattr
+./gen-keys.sh >/dev/null 2>&1
+
+# Determine keyid from .cer
+keyid() {
+  id=$(openssl x509 ${ENGINE:+-engine $ENGINE} \
+      -in $1.cer -inform DER -pubkey -noout 2>/dev/null \
+    | openssl asn1parse \
+    | grep BIT.STRING \
+    | cut -d: -f1)
+  if [ -z "$id" ]; then
+    echo "Cannot asn1parse $1.cer" >&2
+    exit 1
+  fi
+  openssl x509 ${ENGINE:+-engine $ENGINE} \
+      -in $1.cer -inform DER -pubkey -noout 2>/dev/null \
+    | openssl asn1parse -strparse $id -out - -noout \
+    | openssl dgst -c -sha1 \
+    | cut -d' ' -f2 \
+    | grep -o ":..:..:..:..$" \
+    | tr -d :
+}
+
+_ima_sign() {
+  local k=$1 a=$2 f=$3
+
+  cmd=(evmctl ima_sign ${ENGINE:+--engine $ENGINE} -a $a \
+	   -k $k.key --xattr-user --sigfile $f)
+  echo $YELLOW$MODE ${cmd[@]} $NORM
+  eval "${cmd[@]}" >$a.out 2>&1
+  _evmctl_catch $? $a.out ima_sign "$a ($k.key)" $f || return
+
+  # Check that detached signature matches xattr signature
+  if [ ! -e $f.sig ]; then
+    echo "evmctl ima_sign: no detached signature $f.sig"
+    return 1
+  fi
+
+  getfattr -n user.ima --only-values $f > $f.sig2
+  if ! cmp -bl $f.sig $f.sig2; then
+    echo "evmctl ima_sign: xattr signature differ from detached $f.sig"
+    rm -f $f.sig $f.sig2
+    return 1
+  fi
+
+  rm -f $f.sig $f.sig2
+}
+
+check_rsa() {
+  local k=test-rsa1024 a=$1 p=$2
+  local f=$a.txt
+
+  # Append suffix to files for negative tests, because we need
+  # to leave only good files for ima_verify.test
+  _isneg && f+=-
+  rm -f $f
+
+  keyid=$(keyid $k)
+  if [ $? -ne 0 ]; then
+    echo "Unable to determine keyid for $k"
+    return 99
+  fi
+  p=$(echo $p | sed "s/K/$keyid/")
+
+  if ! openssl dgst -$a /dev/null >/dev/null 2>&1; then
+    echo "$a ($k.key) test is skipped (openssl cannot handle $a digest)"
+    return 77
+  fi
+  touch $f
+  cmd=(openssl dgst -$a -sign $k.key -hex $f)
+  echo $BLUE - "${cmd[@]}" $NORM
+  sig=$(set -o pipefail; eval "${cmd[@]}" 2>/dev/null | cut -d' ' -f2)
+  if [ $? -ne 0 ] && _ispos; then
+    echo "$a ($k.key) test is skipped (openssl cannot sign with $a+$k.key)"
+    rm -f $f
+    return 77
+  fi
+
+  _ima_sign $k $a $f || return
+  if ! getfattr -n user.ima -e hex $f | grep -qx user.ima=$p$sig; then
+    red_if_pos
+    echo "Did not find expected hash value for $a:"
+    echo "    user.ima=$p$sig"
+    echo ""
+    echo "Actual output below:"
+    getfattr -n user.ima -e hex $f | sed 's/^/    /'
+    norm_if_pos
+    rm -f $f
+    return 1
+  fi
+  return 0
+}
+
+check_ecrdsa() {
+  local k=$1 a=$2 p=$3
+
+  # Sign different files not only depending on a hash algo,
+  # but also on a key. Append curve letter to the hash algo.
+  curve=${k##*-}
+  f=$a${curve,,}.txt
+
+  # Append suffix to files for negative tests, because we need
+  # to leave only good files for ima_verify.test
+  _isneg && f+=-
+  rm -f $f
+
+  # Older openssl unable to parse 512-bit keys
+  if ! openssl pkey ${ENGINE:+-engine $ENGINE} -in $k.key >/dev/null 2>&1; then
+    echo "$a ($k.key) test is skipped"
+    return 77
+  fi
+
+  keyid=$(keyid $k)
+  if [ $? -ne 0 ]; then
+    echo "Unable to determine keyid for $k"
+    return 99
+  fi
+  p=$(echo $p | sed "s/K/$keyid/")
+
+  touch $f
+  _ima_sign $k $a $f || return
+  # Only verify prefix here.
+  if ! getfattr -n user.ima -e hex $f | grep -q ^user.ima=$p; then
+    red_if_pos
+    echo "Signature prefix does not match for $a ($k):"
+    echo "Expected:  user.ima=$p..."
+    echo ""
+    echo "Actual output below:"
+    getfattr -n user.ima -e hex $f | sed 's/^/    /'
+    norm_if_pos
+    rm -f $f
+    return 1
+  fi
+
+  # Extract signature from xattr
+  getfattr -n user.ima -e hex $f \
+    | grep ^user.ima= \
+    | sed s/^user.ima=$p// \
+    | xxd -r -p > $a.sig2
+
+  # Verify with openssl
+  if ! openssl dgst ${ENGINE:+-engine $ENGINE} -$a \
+	-verify $k.pub -signature $a.sig2 $f >/dev/null 2>&1; then
+    return 1
+  fi
+  rm $a.sig2
+}
+
+# check args: algo prefix hex-signature-prefix (K in place of keyid.)
+pos check_rsa md5    0x030201K0080
+pos check_rsa sha1   0x030202K0080
+pos check_rsa sha224 0x030207K0080
+pos check_rsa sha256 0x030204K0080
+pos check_rsa sha384 0x030205K0080
+pos check_rsa sha512 0x030206K0080
+pos check_rsa rmd160 0x030203K0080
+neg check_rsa invalid-hash-algo  0x030202K0080
+_enable_gost_engine
+pos check_ecrdsa test-gost2012_256-A md_gost12_256 0x030212K0040
+pos check_ecrdsa test-gost2012_256-B md_gost12_256 0x030212K0040
+pos check_ecrdsa test-gost2012_256-C md_gost12_256 0x030212K0040
+pos check_ecrdsa test-gost2012_512-A md_gost12_512 0x030213K0080
+pos check_ecrdsa test-gost2012_512-B md_gost12_512 0x030213K0080
+neg check_ecrdsa test-gost2012_256-A md_gost12_512 0x030212K0040
+neg check_ecrdsa test-gost2012_512-A md_gost12_256 0x030212K0040
+
+_report_exit

@@ -1,0 +1,84 @@
+#!/bin/bash
+#
+# evmctl ima_hash tests
+#
+# Copyright (C) 2019 Vitaly Chikunov <vt@altlinux.org>
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2, or (at your option)
+# any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+cd $(dirname $0)
+PATH=../src:$PATH
+source ./functions
+_require evmctl openssl
+
+# Check with constant
+check_const() {
+  local a=$1 p=$2 h=$3 f=$4
+
+  cmd=(evmctl ima_hash -v ${ENGINE:+--engine $ENGINE} -a $a --xattr-user $f)
+  echo $YELLOW$MODE "${cmd[@]}" $NORM
+  eval "${cmd[@]}" >$a.out 2>&1
+  _evmctl_catch $? $a.out ima_hash $a $f || return
+
+  if ! getfattr -n user.ima -e hex $f | grep -qx user.ima=$p$h; then
+    red_if_pos
+    echo "Did not find expected hash value for $a:"
+    echo "    user.ima=$p$h"
+    echo ""
+    echo "Actual output below:"
+    getfattr -n user.ima -e hex $f | sed 's/^/    /'
+    norm_if_pos
+    rm -f $f
+    return 1
+  fi
+  rm -f $f
+  return 0
+}
+
+check() {
+  local a=$1 p=$2 h=$3
+  local f=$a-hash.txt
+
+  rm -f $f
+  touch $f
+  cmd=(openssl dgst ${ENGINE:+--engine $ENGINE} -$a $f)
+  echo $BLUE - "${cmd[@]}" $NORM
+  h=$(set -o pipefail; eval "${cmd[@]}" 2>/dev/null | cut -d' ' -f2)
+  if [ $? -ne 0 -a -z "$HOWFAILED" ]; then
+    echo "$a test is skipped"
+    rm -f $f
+    return 77
+  fi
+  check_const $a $p "$h" $f
+}
+
+# check args: algo prefix hex-hash
+pos check md4    0x01
+pos check md5    0x01
+pos check sha1   0x01
+neg check SHA1   0x01 # uppercase
+neg check sha512-224 0x01 # valid for pkcs1
+neg check sha512-256 0x01 # valid for pkcs1
+neg check unknown 0x01 # nonexistent
+pos check sha224 0x0407
+pos check sha256 0x0404
+pos check sha384 0x0405
+pos check sha512 0x0406
+pos check rmd160 0x0403
+neg check sm3     0x01
+neg check sm3-256 0x01
+_enable_gost_engine
+pos check md_gost12_256 0x0412
+pos check streebog256   0x0412
+pos check md_gost12_512 0x0413
+pos check streebog512   0x0413
+
+_report_exit

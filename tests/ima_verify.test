@@ -1,0 +1,79 @@
+#!/bin/bash
+#
+# evmctl ima_verify tests
+#
+# Copyright (C) 2019 Vitaly Chikunov <vt@altlinux.org>
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2, or (at your option)
+# any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+cd $(dirname $0)
+PATH=../src:$PATH
+source ./functions
+_require evmctl openssl
+
+# Check with constant
+check() {
+  local k=$1 a=$2 f=$3
+
+  if [ ! -e $f ]; then
+    echo "Signed file $f is not found. Skipping verify $a ($k) test."
+    return 77
+  fi
+  if ! openssl dgst ${ENGINE:+--engine $ENGINE} -$a /dev/null >/dev/null 2>&1; then
+    echo "$a ($k.key) test is skipped (openssl does not support $a)"
+    rm -f $f
+    return 77
+  fi
+
+  cmd=(evmctl ima_verify ${ENGINE:+--engine $ENGINE} -v -k $k --xattr-user $f)
+  echo $YELLOW$MODE "${cmd[@]}" $NORM
+  eval "${cmd[@]}" >$f.out 2>&1
+  _evmctl_catch $? $f.out ima_verify "$f ($k)"
+}
+
+# Tests (check args: key hash-algo signed-file
+for a in md5 sha1 sha224 sha256 sha384 sha512 rmd160; do
+  f=$a.txt
+  pos check test-rsa1024.cer $a $f
+  pos check /dev/zero,test-rsa1024.cer $a $f
+  pos check /dev/null,test-rsa1024.cer $a $f
+  pos check test-rsa1024.cer,test-rsa2048.cer $a $f
+  pos check test-rsa2048.cer,test-rsa1024.cer $a $f
+  pos check ,,test-rsa1024.cer $a $f
+  pos check test-rsa1024.cer,,, $a $f
+  neg check test-rsa2048.cer $a $f
+  neg check /dev/absent $a $f
+  neg check /dev/null $a $f
+  neg check /dev/zero $a $f
+done
+
+_enable_gost_engine
+wk=test-gost2012_512-B.cer # first wrong key
+for k in gost2012_256-A gost2012_256-B gost2012_256-C \
+         gost2012_512-A gost2012_512-B; do
+  tmp=${k#gost2012_}
+  bits=${tmp%-?}
+  wbits=$(( $bits == 256 ? 512 : 256 ))
+  curve=${k#*-}
+  a=md_gost12_$bits   # proper hash algo
+  f=$a${curve,,}.txt  # file signed in ima_sign test
+  k=test-$k.cer
+  wwk=test-gost2012_$wbits-$curve.cer # key with wrong bit length
+
+  pos check $k     $a $f
+  pos check $wk,$k $a $f
+  pos check $k,$wk $a $f
+  neg check $wk    $a $f
+  neg check $wwk   $a $f
+  wk=$k # previous key is always wrong
+done
+
+_report_exit
