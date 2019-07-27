@@ -1,0 +1,211 @@
+#!/bin/bash
+#
+# evmctl ima_sign tests
+#
+# Copyright (C) 2019 Vitaly Chikunov <vt@altlinux.org>
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2, or (at your option)
+# any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+cd $(dirname $0)
+PATH=../src:$PATH
+source ./functions.sh
+_require evmctl openssl xxd getfattr
+./gen-keys.sh >/dev/null 2>&1
+
+# Determine keyid from cert
+keyid() {
+  local cer=$1.cer
+
+  id=$(openssl x509 ${ENGINE:+-engine $ENGINE} \
+      -in $cer -inform DER -pubkey -noout 2>/dev/null \
+    | openssl asn1parse \
+    | grep BIT.STRING \
+    | cut -d: -f1)
+  if [ -z "$id" ]; then
+    echo "Cannot asn1parse $cer" >&2
+    exit 1
+  fi
+  openssl x509 ${ENGINE:+-engine $ENGINE} \
+      -in $cer -inform DER -pubkey -noout 2>/dev/null \
+    | openssl asn1parse -strparse $id -out - -noout \
+    | openssl dgst -c -sha1 \
+    | cut -d' ' -f2 \
+    | grep -o ":..:..:..:..$" \
+    | tr -d :
+}
+
+# Check that detached signature matches xattr signature
+_test_sigfile() {
+  local file=$1 file_sig=$2 file_sig2=$3
+
+  if [ ! -e $file_sig ]; then
+    red_if_pos
+    echo "evmctl ima_sign: no detached signature $file_sig"
+    norm_if_pos
+    rm $file
+    return $FAIL
+  fi
+
+  _extract_ima_xattr $file $file_sig2
+  #getfattr -n user.ima --only-values $file > $file_sig2
+  if ! cmp -bl $file_sig $file_sig2; then
+    red_if_pos
+    echo "evmctl ima_sign: xattr signature on $file differ from detached $file_sig"
+    norm_if_pos
+    rm $file $file_sig $file_sig2
+    return $FAIL
+  fi
+
+  rm $file_sig $file_sig2
+}
+
+_ima_sign() {
+  local key=$1 alg=$2 file=$3 opts=$4
+
+  FOR="$alg ($key.key)" DEL=$file \
+    _evmctl_run ima_sign $opts \
+      --hashalgo $alg --key $key.key --xattr-user --sigfile $file || return
+  _test_sigfile $file $file.sig $file.sig2
+}
+
+# Test RSA signature v1
+# This is simpler test than v2 tests as we don't try to verify
+# correctness of the signature here.
+check_rsa1() {
+  local key=test-rsa1024 alg=$1 pref=$2
+  local file=${alg}-v1.txt
+
+  # Append suffix to files for negative tests, because we need
+  # to leave only good files for ima_verify.test
+  _is_negative_test && file+='~'
+
+  rm -f $file
+  touch $file
+  _ima_sign $key $alg $file "--rsa" || return
+  FOR=$alg \
+    _test_ima_xattr $file $pref || return
+  return $OK
+}
+
+# Test RSA signature v2
+check_rsa2() {
+  local key=test-rsa1024 alg=$1 pref=$2
+  local file=$alg.txt
+
+  # Append suffix to files for negative tests, because we need
+  # to leave only good files for ima_verify.test
+  _is_negative_test && file+='~'
+  rm -f $file
+
+  keyid=$(keyid $key)
+  if [ $? -ne 0 -o -z "$keyid" ]; then
+    echo "Unable to determine keyid for $key"
+    return $HARDFAIL
+  fi
+  pref=$(echo $pref | sed "s/K/$keyid/")
+
+  # Calculate signature with openssl to compare later
+  if _is_positive_test && ! openssl dgst -$alg /dev/null >/dev/null 2>&1; then
+    echo $CYAN"$alg ($key.key) test is skipped (openssl cannot handle $alg digest)"$NORM
+    return $SKIP
+  fi
+  touch $file
+  cmd="openssl dgst -$alg -sign $key.key -hex $file"
+  echo - "$cmd"
+  sig=$(set -o pipefail; eval "$cmd" 2>/dev/null | cut -d' ' -f2)
+  if [ $? -ne 0 ] && _is_positive_test; then
+    echo $CYAN"$alg ($key.key) test is skipped (openssl cannot sign with $alg+$key.key)"$NORM
+    rm $file
+    return $SKIP
+  fi
+
+  _ima_sign $key $alg $file || return
+  FOR=$alg \
+    _test_ima_xattr $file $pref$sig || return
+  return $OK
+}
+
+# Test EC-RDSA signature v2
+check_ecrdsa() {
+  local key=test-$1 alg=$2 pref=$3
+
+  # Sign different files not only depending on alg hash algo,
+  # but also on alg key. Append curve letter to the hash algo.
+  curve=${key##*-}
+  file=$alg${curve,,}.txt
+
+  # Append suffix to files for negative tests, because we need
+  # to leave only good files for ima_verify.test
+  _is_negative_test && file+='~'
+  rm -f $file
+
+  # Older openssl unable to parse 512-bit EC-RDSA keys
+  if ! openssl pkey ${ENGINE:+-engine $ENGINE} -in $key.key >/dev/null 2>&1; then
+    echo $CYAN"$alg ($key.key) test is skipped"$NORM
+    return $SKIP
+  fi
+
+  keyid=$(keyid $key)
+  if [ $? -ne 0 ]; then
+    echo "Unable to determine keyid for $key"
+    return $HARDFAIL
+  fi
+  pref=$(echo $pref | sed "s/K/$keyid/")
+
+  touch $file
+  _ima_sign $key $alg $file || return
+  FOR="$alg ($key)" \
+    _test_ima_xattr $file $pref.* || return
+
+  _extract_ima_xattr $file $file.sig2 $pref
+
+  # Verify with openssl
+  cmd="openssl dgst ${ENGINE:+-engine $ENGINE} -$alg -verify $key.pub \
+	-signature $file.sig2 $file"
+  echo - "$cmd"
+  if ! eval "$cmd"; then
+    red_if_pos
+    echo "Signature verification with openssl is failed."
+    norm_if_pos
+    rm $file.sig2
+    return $FAIL
+  fi
+
+  rm $file.sig2
+  return $OK
+}
+
+set -f # disable globbing
+
+# check args: algo prefix hex-signature-prefix (K in place of keyid.)
+neg check_rsa1 md5    0x0301.*
+pos check_rsa1 sha1   0x0301.{290}
+pos check_rsa1 sha256 0x0301.{290}
+pos check_rsa2 md5    0x030201K0080
+pos check_rsa2 sha1   0x030202K0080
+pos check_rsa2 sha224 0x030207K0080
+pos check_rsa2 sha256 0x030204K0080
+pos check_rsa2 sha384 0x030205K0080
+pos check_rsa2 sha512 0x030206K0080
+pos check_rsa2 rmd160 0x030203K0080
+neg check_rsa2 noalgo 0x0302
+_enable_gost_engine
+pos check_ecrdsa gost2012_256-A md_gost12_256 0x030212K0040
+pos check_ecrdsa gost2012_256-B md_gost12_256 0x030212K0040
+pos check_ecrdsa gost2012_256-C md_gost12_256 0x030212K0040
+pos check_ecrdsa gost2012_512-A md_gost12_512 0x030213K0080
+pos check_ecrdsa gost2012_512-B md_gost12_512 0x030213K0080
+neg check_ecrdsa gost2012_256-A md_gost12_512 0x030212K0040
+neg check_ecrdsa gost2012_512-A md_gost12_256 0x030212K0040
+
+# This test leaves signed *.txt files for ima_verify.test.
+# they are never deleted except by `make clean'.
+_report_exit

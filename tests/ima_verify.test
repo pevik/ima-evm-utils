@@ -1,0 +1,93 @@
+#!/bin/bash
+#
+# evmctl ima_verify tests
+#
+# Copyright (C) 2019 Vitaly Chikunov <vt@altlinux.org>
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2, or (at your option)
+# any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+cd $(dirname $0)
+PATH=../src:$PATH
+source ./functions.sh
+_require evmctl openssl
+
+# Note: This test uses *.txt files signed by ima_sign.test as input.
+
+# Check with constant
+check() {
+  local key=$1 alg=$2 files=${@:3}
+
+  if ! openssl dgst ${ENGINE:+-engine $ENGINE} -$alg /dev/null >/dev/null 2>&1; then
+    echo $CYAN"$alg ($key.key) test is skipped (openssl does not support $alg)"$NORM
+    return $SKIP
+  fi
+
+  FOR="$files ($key)" \
+    _evmctl_run ima_verify --key $key --xattr-user $files
+}
+
+# Tests (check args: key hash-algo signed-file)
+for alg in sha1 sha256; do
+  file=$alg-v1.txt
+
+  pos check test-rsa1024.pub $alg $file
+  neg check test-rsa2048.pub $alg $file
+  neg check /dev/null $alg $file
+  neg check /dev/zero $alg $file
+done
+
+for alg in md5 sha1 sha224 sha256 sha384 sha512 rmd160; do
+  file=$alg.txt
+
+  if [ ! -e $file ]; then
+    echo $CYAN"Signed file $file is not found. Skipping verify $alg test."$NORM
+    testsskip+=1
+    continue
+  fi
+  pos check test-rsa1024.cer $alg $file
+  neg check test-rsa1024.cer $alg /dev/null /proc/absent $file
+  neg check test-rsa1024.cer $alg $file /dev/null /proc/absent
+  pos check test-rsa1024.cer $alg $file $prev
+  pos check test-rsa1024.cer $alg $prev $file
+  pos check /dev/zero,test-rsa1024.cer $alg $file
+  pos check /dev/null,test-rsa1024.cer $alg $file
+  pos check test-rsa1024.cer,test-rsa2048.cer $alg $file
+  pos check test-rsa2048.cer,test-rsa1024.cer $alg $file
+  pos check ,,test-rsa1024.cer $alg $file
+  neg check test-rsa2048.cer $alg $file
+  neg check /dev/absent $alg $file
+  neg check /dev/null $alg $file
+  neg check /dev/zero $alg $file
+  prev=$file
+done
+
+_enable_gost_engine
+wk=test-gost2012_512-B.cer # wrong key (other than first)
+for key in gost2012_256-A gost2012_256-B gost2012_256-C \
+	   gost2012_512-A gost2012_512-B; do
+  tmp=${key#gost2012_}
+  bits=${tmp%-?}	  # correct bit length
+  wbits=$(( $bits == 256 ? 512 : 256 )) # wrong bit length
+  curve=${key#*-}	  # curve letter
+  alg=md_gost12_$bits	  # proper hash algo
+  file=$alg${curve,,}.txt # file signed in ima_sign test
+  key=test-$key.cer	  # correct key in a cert
+  wwk=test-gost2012_$wbits-$curve.cer # key with wrong bit length
+
+  pos check $key     $alg $file
+  pos check $wk,$key $alg $file
+  pos check $key,$wk $alg $file
+  neg check $wk    $alg $file
+  neg check $wwk   $alg $file
+  wk=$key # previous key is always wrong
+done
+
+_report_exit
