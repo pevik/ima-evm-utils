@@ -1,0 +1,70 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+#
+# evmctl ima_hash tests
+#
+# Copyright (C) 2019 Vitaly Chikunov <vt@altlinux.org>
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2, or (at your option)
+# any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+cd $(dirname $0)
+PATH=../src:$PATH
+source ./functions.sh
+_require evmctl openssl getfattr
+
+trap _report_exit EXIT
+set -f # disable globbing
+
+check() {
+  local alg=$1 pref=$2 hash=$3
+  local file=$alg-hash.txt
+
+  rm -f $file
+  touch $file
+  # Generate hash with openssl, if it's failed skip test,
+  # unless it's negative test, then pass to evmctl
+  cmd="openssl dgst ${ENGINE:+-engine $ENGINE} -$alg $file"
+  echo - $cmd
+  hash=$(set -o pipefail; $cmd 2>/dev/null | cut -d' ' -f2)
+  if [ $? -ne 0 ] && _is_expect_pass; then
+    echo $CYAN"$alg test is skipped"$NORM
+    rm $file
+    return $SKIP
+  fi
+
+  ADD_TEXT_FOR=$alg ADD_DEL=$file \
+    _evmctl_run ima_hash --hashalgo $alg --xattr-user $file || return
+  ADD_TEXT_FOR=$alg \
+    _test_xattr $file user.ima $pref$hash || return
+  rm $file
+  return $OK
+}
+
+# check args: algo prefix hex-hash
+expect_pass check md4    0x01
+expect_pass check md5    0x01
+expect_pass check sha1   0x01
+expect_fail check SHA1   0x01 # uppercase
+expect_fail check sha512-224 0x01 # valid for pkcs1
+expect_fail check sha512-256 0x01 # valid for pkcs1
+expect_fail check unknown 0x01 # nonexistent
+expect_pass check sha224 0x0407
+expect_pass check sha256 0x0404
+expect_pass check sha384 0x0405
+expect_pass check sha512 0x0406
+expect_pass check rmd160 0x0403
+expect_fail check sm3     0x01
+expect_fail check sm3-256 0x01
+_enable_gost_engine
+expect_pass check md_gost12_256 0x0412
+expect_pass check streebog256   0x0412
+expect_pass check md_gost12_512 0x0413
+expect_pass check streebog512   0x0413
