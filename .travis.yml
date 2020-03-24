@@ -13,8 +13,16 @@ addons:
    - docbook-xml
 matrix:
    include:
-     - env: TSS=ibmtss
-     - env: TSS=tpm2-tss
+     - env: TSS=ibmtss SSL=openssl
+# libressl is failing
+#    - env: TSS=ibmtss SSL=libressl;
+     - env: TSS=tpm2-tss SSL=openssl
+
+before_install:
+   - if [ "${SSL}" = "libressl" ]; then
+        ./tests/install-libressl.sh;
+     fi
+
 install:
    - if [ "${TSS}" = "ibmtss" ]; then
            ./tests/install-tss.sh;
@@ -29,6 +37,11 @@ install:
      fi
 
 script:
+   - if [ "${SSL}" = "libressl" ]; then
+       export PKG_CONFIG_PATH="/opt/libressl/lib/pkgconfig:$PKG_CONFIG_PATH";
+       export LIBCRYPTO_CFLAGS="$(pkg-config --cflags-only-I --libs-only-L libressl-libcrypto)";
+     fi
+
    - autoreconf -i && ./configure && make -j$(nproc) && sudo make install && VERBOSE=1 make check;
 
    - tail -3 tests/ima_hash.log;
