@@ -62,7 +62,10 @@
 #include <openssl/hmac.h>
 #include <openssl/err.h>
 #include <openssl/rsa.h>
+/* LibreSSL removed engines */
+#ifndef LIBRESSL_VERSION_NUMBER
 #include <openssl/engine.h>
+#endif
 #include "hash_info.h"
 #include "pcr.h"
 #include "utils.h"
@@ -2068,7 +2071,9 @@ static void usage(void)
 		"      --selinux      use custom Selinux label for EVM\n"
 		"      --caps         use custom Capabilities for EVM(unspecified: from FS, empty: do not use)\n"
 		"      --list         measurement list verification\n"
+#ifndef LIBRESSL_VERSION_NUMBER
 		"      --engine e     preload OpenSSL engine e (such as: gost)\n"
+#endif
 		"  -v                 increase verbosity level\n"
 		"  -h, --help         display this help and exit\n"
 		"\n");
@@ -2122,7 +2127,9 @@ static struct option opts[] = {
 	{"selinux", 1, 0, 136},
 	{"caps", 2, 0, 137},
 	{"list", 0, 0, 138},
+#ifndef LIBRESSL_VERSION_NUMBER
 	{"engine", 1, 0, 139},
+#endif
 	{"xattr-user", 0, 0, 140},
 	{}
 
@@ -2167,7 +2174,9 @@ static char *get_password(void)
 int main(int argc, char *argv[])
 {
 	int err = 0, c, lind;
+#ifndef LIBRESSL_VERSION_NUMBER
 	ENGINE *eng = NULL;
+#endif
 
 #if !(OPENSSL_VERSION_NUMBER < 0x10100000)
 	OPENSSL_init_crypto(
@@ -2286,6 +2295,7 @@ int main(int argc, char *argv[])
 			measurement_list = 1;
 			break;
 		case 139: /* --engine e */
+#ifndef LIBRESSL_VERSION_NUMBER
 			eng = ENGINE_by_id(optarg);
 			if (!eng) {
 				log_err("engine %s isn't available\n", optarg);
@@ -2298,6 +2308,7 @@ int main(int argc, char *argv[])
 			}
 			ENGINE_set_default(eng, ENGINE_METHOD_ALL);
 			break;
+#endif
 		case 140: /* --xattr-user */
 			xattr_ima = "user.ima";
 			xattr_evm = "user.evm";
@@ -2330,6 +2341,7 @@ int main(int argc, char *argv[])
 			err = 125;
 	}
 
+#ifndef LIBRESSL_VERSION_NUMBER
 	if (eng) {
 		ENGINE_finish(eng);
 		ENGINE_free(eng);
@@ -2337,6 +2349,7 @@ int main(int argc, char *argv[])
 		ENGINE_cleanup();
 #endif
 	}
+#endif
 	ERR_free_strings();
 	EVP_cleanup();
 	BIO_free(NULL);
