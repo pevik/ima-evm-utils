@@ -56,11 +56,18 @@ script:
 
    - autoreconf -i && ./configure && make -j$(nproc) && sudo make install && VERBOSE=1 make check;
 
-   - tail -3 tests/ima_hash.log;
-   - tail -3 tests/sign_verify.log;
+   - echo ===== tests/ima_hash.log =====
+   - cat tests/ima_hash.log;
+   - echo "=============";
+
+   - echo ===== tests/sign_verify.log =====
+   - cat tests/sign_verify.log
+   - echo "=============";
 
 # Without a HW TPM, the boot_aggregate test requires initializing a software
 # TPM based on the TPM event log.
    - if [ "${TSS}" = "ibmtss" ]; then
-       tail -3 tests/boot_aggregate.log;
+       echo ===== tests/boot_aggregate.log =====;
+       cat tests/boot_aggregate.log;
+       echo "=============";
      fi

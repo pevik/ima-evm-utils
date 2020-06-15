@@ -108,6 +108,20 @@ display_pcrs() {
 # list matches.
 check() {
 	echo "INFO: Calculating the boot_aggregate (PCRs 0 - 7) for multiple banks"
+
+	# FIXME: debug
+	echo "which"; which evmctl
+	../src/evmctl
+
+	echo "test evmctl ima_boot_aggregate"
+	evmctl ima_boot_aggregate
+	echo "returned: $?"
+
+	echo "../src/evmctl ima_boot_aggregate"
+	../src/evmctl ima_boot_aggregate
+	echo "returned: $?"
+	# FIXME: debug
+
 	bootaggr=$(evmctl ima_boot_aggregate)
 	if [ $? -ne 0 ]; then
 		echo "${CYAN}SKIP: evmctl ima_boot_aggregate: $bootaggr${NORM}"
