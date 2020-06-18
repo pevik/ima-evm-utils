@@ -1796,6 +1796,12 @@ static int read_tpm_banks(int num_banks, struct tpm_bank_info *bank)
 	for (i = 0; i < num_banks; i++) {
 		err = 0;
 		for (j = 0; j < NUM_PCRS && !err; j++) {
+			if (!bank[i].algo_name) {
+				log_debug("No algo_name for PCR: %d\n", i);
+				bank[i].supported = 0;
+				continue;
+			}
+
 			err = tpm2_pcr_read(bank[i].algo_name, j,
 					    bank[i].pcr[j], bank[i].digest_size,
 					    &errmsg);
