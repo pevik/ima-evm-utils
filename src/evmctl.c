@@ -1998,11 +1998,17 @@ static int cmd_ima_bootaggr(struct command *cmd)
 	 * Format: <hash algorithm name>:<boot_aggregate digest>\n ...
 	 */
 	for (i = 0; i < num_banks; i++) {
-		if (!tpm_banks[i].supported)
+		if (!tpm_banks[i].supported || !tpm_banks[i].algo_name)
 			continue;
 		bootaggr_len += strlen(tpm_banks[i].algo_name) + 1;
 		bootaggr_len += (tpm_banks[i].digest_size * 2) + 1;
 	}
+
+	if (!bootaggr_len) {
+		log_info("No TPM 2.0 PCR bank algorithm found (no TPM 2.0?)\n");
+		return -1;
+	}
+
 	bootaggr = malloc(bootaggr_len);
 
 	/*
@@ -2012,7 +2018,7 @@ static int cmd_ima_bootaggr(struct command *cmd)
 	 * strings.
 	 */
 	for (i = 0; i < num_banks; i++) {
-		if (!tpm_banks[i].supported)
+		if (!tpm_banks[i].supported || !tpm_banks[i].algo_name)
 			continue;
 		calc_bootaggr(&tpm_banks[i]);
 		offset += append_bootaggr(bootaggr + offset, tpm_banks + i);
