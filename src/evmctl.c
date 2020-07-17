@@ -2082,6 +2082,13 @@ static int read_binary_bios_measurements(char *file, struct tpm_bank_info *bank)
 	int len;
 	int i;
 
+	struct stat s;
+	stat(file, &s);
+	if (!S_ISREG(s.st_mode)) {
+		log_errno("Not a regular file or link to regular file.\n");
+		return 1;
+	}
+
 	fp = fopen(file, "r");
 	if (!fp) {
 		log_errno("Failed to open TPM 1.2 event log.\n");
