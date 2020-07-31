@@ -61,7 +61,6 @@ OPTIONS
       --engine e     preload OpenSSL engine e (such as: gost)
       --pcrs         file containing TPM 1.2 pcrs
       --validate     ignore ToMToU measurement violations
-      --verify       verify the template data digest
       --verify-sig   verify the file signature based on the file hash, both
                      stored in the template data.
   -v                 increase verbosity level
