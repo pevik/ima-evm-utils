@@ -1438,7 +1438,7 @@ struct template_entry {
 
 static uint8_t zero[MAX_DIGEST_SIZE];
 
-static int validate = 0;
+static int ignore_violations = 0;
 
 static int ima_verify_template_hash(struct template_entry *entry)
 {
@@ -1785,7 +1785,7 @@ static void extend_tpm_banks(struct template_entry *entry, int num_banks,
 		 * size.
 		 */
 		if (memcmp(entry->header.digest, zero, SHA_DIGEST_LENGTH) == 0) {
-			if (!validate) {
+			if (!ignore_violations) {
 				memset(bank[i].digest, 0x00, bank[i].digest_size);
 				memset(padded_bank[i].digest, 0x00, padded_bank[i].digest_size);
 			} else {
@@ -2421,6 +2421,7 @@ static void usage(void)
 		"      --caps         use custom Capabilities for EVM(unspecified: from FS, empty: do not use)\n"
 		"      --verify-sig   verify measurement list signatures\n"
 		"      --engine e     preload OpenSSL engine e (such as: gost)\n"
+		"      --ignore-violations ignore ToMToU measurement violations"
 		"  -v                 increase verbosity level\n"
 		"  -h, --help         display this help and exit\n"
 		"\n");
@@ -2476,7 +2477,7 @@ static struct option opts[] = {
 	{"verify-sig", 0, 0, 138},
 	{"engine", 1, 0, 139},
 	{"xattr-user", 0, 0, 140},
-	{"validate", 0, 0, 141},
+	{"ignore-violations", 0, 0, 141},
 	{"pcrs", 1, 0, 142},
 	{}
 
@@ -2656,8 +2657,8 @@ int main(int argc, char *argv[])
 			xattr_ima = "user.ima";
 			xattr_evm = "user.evm";
 			break;
-		case 141: /* --validate */
-			validate = 1;
+		case 141: /* --ignore-violations */
+			ignore_violations = 1;
 			break;
 		case 142:
 			pcrfile = optarg;
