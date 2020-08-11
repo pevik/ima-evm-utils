@@ -20,9 +20,15 @@ AC_DEFUN([EVMCTL_MANPAGE_DOCBOOK_XSL], [
 		DOCBOOK_XSL_URI="http://docbook.sourceforge.net/release/xsl/current"
 		DOCBOOK_XSL_PATH="manpages/docbook.xsl"
 		MANPAGE_DOCBOOK_XSL=$(${XMLCATALOG} ${XML_CATALOG_FILE} ${DOCBOOK_XSL_URI}/${DOCBOOK_XSL_PATH} | sed -n 's|^file:/\+|/|p;q')
+dnl FIXME: DEBUG
+		echo "running: ${XMLCATALOG} ${XML_CATALOG_FILE} ${DOCBOOK_XSL_URI}/${DOCBOOK_XSL_PATH}"
+		${XMLCATALOG} ${XML_CATALOG_FILE} ${DOCBOOK_XSL_URI}/${DOCBOOK_XSL_PATH}
+		echo "found customized XML catalog: '${MANPAGE_DOCBOOK_XSL}'"
+dnl FIXME: DEBUG
 	fi
 	if test "x${MANPAGE_DOCBOOK_XSL}" = "x"; then
 		MANPAGE_DOCBOOK_XSL="/usr/share/xml/docbook/stylesheet/docbook-xsl/manpages/docbook.xsl"
+		echo "Use the default XML catalog: '$MANPAGE_DOCBOOK_XSL'" # FIXME: debug
 	fi
 	AC_SUBST(MANPAGE_DOCBOOK_XSL)
 ])
