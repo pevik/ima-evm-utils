@@ -25,6 +25,11 @@ fi
 
 export CC CFLAGS LDFLAGS
 
+# FIXME: debug
+echo "debug: find openssl/opensslconf.h"
+find /usr/ | grep -e openssl/opensslconf.h -e openssl/aes.h || true
+# FIXME: debug
+
 echo "=== compiler version ==="
 $CC --version
 echo "CFLAGS: '$CFLAGS'"
