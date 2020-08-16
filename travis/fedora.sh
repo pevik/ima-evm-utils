@@ -36,6 +36,7 @@ yum -y install \
 	pkg-config \
 	procps \
 	sudo \
+	swtpm \
 	vim-common \
 	wget \
 	which
