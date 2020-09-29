@@ -36,13 +36,12 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
-#include <attr/xattr.h>
+#include <sys/xattr.h>
 #include <getopt.h>
 #include <signal.h>
 #include <keyutils.h>
 #include <asm/byteorder.h>
 #include <syslog.h>
-#include <attr/xattr.h>
 #include <dirent.h>
 #include <ctype.h>
 
