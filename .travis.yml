@@ -5,6 +5,17 @@ services:
 
 matrix:
     include:
+        # native non-intel
+        - os: linux
+          arch: s390x
+          env: DISTRO=debian:testing TSS=tpm2-tss
+          compiler: gcc
+
+        - os: linux
+          arch: ppc64le
+          env: DISTRO=debian:testing TSS=tpm2-tss
+          compiler: gcc
+
         # 32 bit build
         - os: linux
           env: DISTRO=debian:stable VARIANT=i386 ARCH=i386 TSS=tpm2-tss
