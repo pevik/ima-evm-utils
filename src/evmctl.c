@@ -1941,6 +1941,7 @@ static int ima_measurement(const char *file)
 	int num_banks = 0;
 	int tpmbanks = 1;
 	int first_record = 1;
+	int loopctr = 0;
 
 	struct template_entry entry = { .template = 0 };
 	FILE *fp;
@@ -1975,6 +1976,7 @@ static int ima_measurement(const char *file)
 		tpmbanks = 0;
 
 	while (fread(&entry.header, sizeof(entry.header), 1, fp)) {
+		loopctr++;
 		if (entry.header.name_len > TCG_EVENT_NAME_LEN_MAX) {
 			log_err("%d ERROR: event name too long!\n",
 				entry.header.name_len);
@@ -2090,6 +2092,8 @@ static int ima_measurement(const char *file)
 		 * compare the re-calculated TPM PCR values after each
 		 * extend.
 		 */
+
+		log_info("count: %d\n", loopctr);
 		err = compare_tpm_banks(num_banks, pseudo_banks, tpm_banks);
 		if (!err)
 			break;
@@ -2105,12 +2109,12 @@ static int ima_measurement(const char *file)
 		log_info("Failed to read any TPM PCRs\n");
 	else {
 		if (!err)
-			log_info("Matched per TPM bank calculated digest(s).\n");
+			log_info("Matched per TPM bank calculated digest(s) (count: %d)\n", loopctr);
 		else if (!err_padded) {
-			log_info("Matched SHA1 padded TPM digest(s).\n");
+			log_info("Matched SHA1 padded TPM digest(s) (count: %d)\n", loopctr);
 			err = 0;
 		} else
-			log_info("Failed to match per TPM bank or SHA1 padded TPM digest(s).\n");
+			log_info("Failed to match per TPM bank or SHA1 padded TPM digest(s) (count %d)\n", loopctr);
 	}
 
 	if (invalid_template_digest) {
