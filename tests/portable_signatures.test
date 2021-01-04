@@ -1,0 +1,814 @@
+#!/bin/bash
+
+#
+# Check if operations on files with portable signatures succeed.
+
+trap cleanup SIGINT SIGTERM EXIT
+
+# Base VERBOSE on the environment variable, if set.
+VERBOSE="${VERBOSE:-0}"
+EVM_CHANGE_MODE="${EVM_CHANGE_MODE:-0}"
+
+cd "$(dirname "$0")"
+export PATH=../src:$PATH
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH
+. ./functions.sh
+_require evmctl
+
+cleanup() {
+	popd > /dev/null
+	umount /mnt
+	losetup -d $dev
+	rm -f test.img
+	rm -f signing_key.der
+	_report_exit
+}
+
+IMA_UUID="28b23254-9467-44c0-b6ba-34b12e85a26d"
+APPRAISE_DIGSIG_FOWNER=2000
+APPRAISE_DIGSIG_RULE="appraise fsuuid=$IMA_UUID fowner=$APPRAISE_DIGSIG_FOWNER appraise_type=imasig"
+MEASURE_FOWNER=2001
+MEASURE_RULE="measure fsuuid=$IMA_UUID fowner=$MEASURE_FOWNER template=ima-sig"
+APPRAISE_FOWNER=2002
+APPRAISE_RULE="appraise fsuuid=$IMA_UUID fowner=$APPRAISE_FOWNER"
+
+check_load_ima_rule() {
+	rule_loaded=$(cat /sys/kernel/security/ima/policy | grep "$1")
+	if [ -z "$rule_loaded" ]; then
+		echo $1 > /sys/kernel/security/ima/policy
+		if [ $? -ne 0 ]; then
+			echo "${RED}Failed to set IMA policy"
+			return $FAIL
+		fi
+	fi
+
+	return $OK
+}
+
+check_ima_sig_appraisal() {
+	if [ $evm_value -ne 0 ]; then
+		echo "${CYAN}SKIP: EVM mode 0 required${NORM}"
+		return $SKIP
+	fi
+
+	echo "test" > test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}echo failed${NORM}"
+		return $FAIL
+	fi
+
+	evmctl ima_sign -a sha256 --key $key_path test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}evmctl failed${NORM}"
+		return $FAIL
+	fi
+
+	chown $APPRAISE_DIGSIG_FOWNER test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}chown failed${NORM}"
+		return $FAIL
+	fi
+
+	check_load_ima_rule "$APPRAISE_DIGSIG_RULE"
+	result=$?
+	if [ $result -ne $OK ]; then
+		return $result
+	fi
+
+	cat test-file > /dev/null
+	if [ $? -ne 0 ]; then
+		echo "${RED}cat failed${NORM}"
+		return $FAIL
+	fi
+
+	echo "test" 2> /dev/null >> test-file
+	if [ $? -eq 0 ]; then
+		echo "${RED}echo error expected${NORM}"
+		return $FAIL
+	fi
+
+	return $OK
+}
+
+cleanup_ima_sig_appraisal() {
+	rm -f test-file
+}
+
+check_ima_sig_ima_measurement_list() {
+	if [ $evm_value -ne 0 ]; then
+		echo "${CYAN}SKIP: EVM mode 0 required${NORM}"
+		return $SKIP
+	fi
+
+	echo "test" > test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}echo failed${NORM}"
+		return $FAIL
+	fi
+
+	evmctl ima_sign -a sha256 --imasig --key $key_path test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}evmctl failed${NORM}"
+		return $FAIL
+	fi
+
+	chown $MEASURE_FOWNER test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}chown failed${NORM}"
+		return $FAIL
+	fi
+
+	check_load_ima_rule "$MEASURE_RULE"
+	result=$?
+	if [ $result -ne $OK ]; then
+		return $result
+	fi
+
+	cat test-file > /dev/null
+	if [ $? -ne 0 ]; then
+		echo "${RED}cat failed${NORM}"
+		return $FAIL
+	fi
+
+	ima_sig_fs=$(getfattr -m security.ima -d -e hex test-file | awk '$0 ~ /^security.ima=/ {split($0, line, "="); print line[2]}')
+	if [ -z "$ima_sig_fs" ]; then
+		echo "${RED}security.ima not found${NORM}"
+		return $FAIL
+	fi
+
+	ima_sig_list=$(cat /sys/kernel/security/ima/ascii_runtime_measurements | awk '$6 == '"$ima_sig_fs")
+
+	if [ -z "$ima_sig_list" ]; then
+		echo "${RED}security.ima mismatch${NORM}"
+		return $FAIL
+	fi
+
+	return $OK
+}
+
+cleanup_ima_sig_ima_measurement_list() {
+	rm -f test-file
+}
+
+# Requires:
+# - evm: Execute evm_inode_init_security() only when an HMAC key is loaded
+check_create_file() {
+	if ! (($evm_value & 2)); then
+		echo "${CYAN}SKIP: EVM mode 2 required${NORM}"
+		return $SKIP
+	fi
+
+	echo "test" > test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}echo failed${NORM}"
+		return $FAIL
+	fi
+
+	return $OK
+}
+
+cleanup_create_file() {
+	rm -f test-file
+}
+
+# Requires:
+# - evm: Ignore INTEGRITY_NOLABEL if no HMAC key is loaded
+# - evm: Allow xattr/attr operations for portable signatures
+# - evm: Execute evm_inode_init_security() only when an HMAC key is loaded
+check_cp_preserve_xattrs() {
+	if [ $evm_value -ne 2 ]; then
+		echo "${CYAN}SKIP: EVM mode 2 required${NORM}"
+		return $SKIP
+	fi
+
+	echo "test" > test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}echo failed${NORM}"
+		return $FAIL
+	fi
+
+	evmctl sign -o -a sha256 --imahash --key $key_path test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}evmctl failed${NORM}"
+		return $FAIL
+	fi
+
+	cp -a test-file test-file.copy
+	if [ $? -ne 0 ]; then
+		echo "${RED}cp failed${NORM}"
+		return $FAIL
+	fi
+
+	return $OK
+}
+
+cleanup_cp_preserve_xattrs() {
+	rm -f test-file test-file.copy
+}
+
+# Requires:
+# - evm: Ignore INTEGRITY_NOLABEL if no HMAC key is loaded
+# - evm: Allow xattr/attr operations for portable signatures
+# - evm: Execute evm_inode_init_security() only when an HMAC key is loaded
+# - ima: Don't remove security.ima if file must not be appraised
+check_tar_extract_xattrs_different_owner() {
+	if [ $evm_value -ne 2 ]; then
+		echo "${CYAN}SKIP: EVM mode 2 required${NORM}"
+		return $SKIP
+	fi
+
+	mkdir in out
+	if [ $? -ne 0 ]; then
+		echo "${RED}mkdir failed${NORM}"
+		return $FAIL
+	fi
+
+	echo "test" > in/test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}echo failed${NORM}"
+		return $FAIL
+	fi
+
+	chown 3000 in/test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}chown failed${NORM}"
+		return $FAIL
+	fi
+
+	chmod 600 in/test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}chmod failed${NORM}"
+		return $FAIL
+	fi
+
+	evmctl sign -o -a sha256 --imahash --key $key_path in/test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}evmctl failed${NORM}"
+		return $FAIL
+	fi
+
+	tar --xattrs-include=* -cf test-archive.tar in/test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}tar failed${NORM}"
+		return $FAIL
+	fi
+
+	tar --xattrs-include=* -xf test-archive.tar -C out
+	if [ $? -ne 0 ]; then
+		echo "${RED}tar failed${NORM}"
+		return $FAIL
+	fi
+
+	return $OK
+}
+
+cleanup_tar_extract_xattrs_different_owner() {
+	rm -Rf in out test-archive.tar
+}
+
+# Requires:
+# - evm: Ignore INTEGRITY_NOLABEL if no HMAC key is loaded
+# - evm: Allow xattr/attr operations for portable signatures
+# - evm: Allow setxattr() and setattr() for unmodified metadata
+# - evm: Execute evm_inode_init_security() only when an HMAC key is loaded
+# - ima: Don't remove security.ima if file must not be appraised
+check_tar_extract_xattrs_same_owner() {
+	if [ $evm_value -ne 2 ]; then
+		echo "${CYAN}SKIP: EVM mode 2 required${NORM}"
+		return $SKIP
+	fi
+
+	mkdir in out
+	if [ $? -ne 0 ]; then
+		echo "${RED}mkdir failed${NORM}"
+		return $FAIL
+	fi
+
+	echo "test" > in/test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}echo failed${NORM}"
+		return $FAIL
+	fi
+
+	evmctl sign -o -a sha256 --imahash --key $key_path in/test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}evmctl failed${NORM}"
+		return $FAIL
+	fi
+
+	tar --xattrs-include=* -cf test-archive.tar in/test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}tar failed${NORM}"
+		return $FAIL
+	fi
+
+	tar --xattrs-include=* -xf test-archive.tar -C out
+	if [ $? -ne 0 ]; then
+		echo "${RED}tar failed${NORM}"
+		return $FAIL
+	fi
+
+	return $OK
+}
+
+cleanup_tar_extract_xattrs_same_owner() {
+	rm -Rf in out test-archive.tar
+}
+
+# Requires:
+# - evm: Ignore INTEGRITY_NOLABEL if no HMAC key is loaded
+# - evm: Allow xattr/attr operations for portable signatures
+# - evm: Allow setxattr() and setattr() for unmodified metadata
+# - ima: Don't remove security.ima if file must not be appraised
+# - evm: Execute evm_inode_init_security() only when an HMAC key is loaded
+check_metadata_change() {
+	if [ $evm_value -ne 2 ]; then
+		echo "${CYAN}SKIP: EVM mode 2 required${NORM}"
+		return $SKIP
+	fi
+
+	echo "test" > test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}echo failed${NORM}"
+		return $FAIL
+	fi
+
+	chown 3001 test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}chown failed${NORM}"
+		return $FAIL
+	fi
+
+	chmod 600 test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}chmod failed${NORM}"
+		return $FAIL
+	fi
+
+	evmctl sign -o -a sha256 --imahash --key $key_path test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}evmctl failed${NORM}"
+		return $FAIL
+	fi
+
+	chown 3001 test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}chown failed${NORM}"
+		return $FAIL
+	fi
+
+	chown 3002 test-file 2> /dev/null
+	if [ $? -eq 0 ]; then
+		echo "${RED}chown error expected${NORM}"
+		return $FAIL
+	fi
+
+	chmod 600 test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}chmod failed${NORM}"
+		return $FAIL
+	fi
+
+	chmod 644 test-file 2> /dev/null
+	if [ $? -eq 0 ]; then
+		echo "${RED}chmod error expected${NORM}"
+		return $FAIL
+	fi
+
+	if [ -f /usr/bin/chcon ]; then
+		label=$(ls -lZ test-file | awk '{print $5}')
+
+		chcon $label test-file
+		if [ $? -ne 0 ]; then
+			echo "${RED}chcon failed${NORM}"
+			return $FAIL
+		fi
+
+		chcon -t null_device_t test-file 2> /dev/null
+		if [ $? -eq 0 ]; then
+			echo "${RED}chcon error expected${NORM}"
+			return $FAIL
+		fi
+	fi
+
+	ima_xattr=$(getfattr -m security.ima -d -e hex test-file | grep -v file)
+	ima_xattr=${ima_xattr#security.ima=}
+	if [ -z "$ima_xattr" ]; then
+		echo "${RED}security.ima not found${NORM}"
+		return $FAIL
+	fi
+
+	setfattr -n security.ima -v $ima_xattr test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}setfattr failed${NORM}"
+		return $FAIL
+	fi
+
+	last_char=${ima_xattr: -1}
+	((last_char += 1))
+	((last_char %= 10))
+	ima_xattr=${ima_xattr:0:-1}$last_char
+
+	setfattr -n security.ima -v $ima_xattr test-file 2> /dev/null
+	if [ $? -eq 0 ]; then
+		echo "${RED}setfattr error expected${NORM}"
+		return $FAIL
+	fi
+
+	setfacl -m u::rw test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}setfacl failed${NORM}"
+		return $FAIL
+	fi
+
+	setfacl -m u::rwx test-file 2> /dev/null
+	if [ $? -eq 0 ]; then
+		echo "${RED}setfacl error expected${NORM}"
+		return $FAIL
+	fi
+
+	return $OK
+}
+
+cleanup_metadata_change() {
+	rm -f test-file
+}
+
+# Requires:
+# - evm: Refuse EVM_ALLOW_METADATA_WRITES only if an HMAC key is loaded
+check_enable_metadata_modification() {
+	if [ $evm_value -ne 2 ]; then
+		echo "${CYAN}SKIP: EVM mode 2 required${NORM}"
+		return $SKIP
+	fi
+
+	if [ "$EVM_CHANGE_MODE" -ne 1 ]; then
+		echo "${CYAN}SKIP: EVM mode change not allowed, set EVM_CHANGE_MODE to 1${NORM}"
+		return $SKIP
+	fi
+
+	echo 6 > /sys/kernel/security/evm
+	evm_value=$(cat /sys/kernel/security/evm)
+	if [ $evm_value != "6" ]; then
+		echo "${RED}EVM initialization value not correctly set${NORM}"
+		return $FAIL
+	fi
+
+	return $OK
+}
+
+# Requires:
+# - evm: Introduce evm_status_revalidate()
+# - evm: Execute evm_inode_init_security() only when an HMAC key is loaded
+check_evm_revalidate() {
+	if [ $evm_value -ne 6 ]; then
+		echo "${CYAN}SKIP: EVM mode 6 required${NORM}"
+		return $SKIP
+	fi
+
+	echo "test" > test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}echo failed${NORM}"
+		return $FAIL
+	fi
+
+	chmod 600 test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}chmod failed${NORM}"
+		return $FAIL
+	fi
+
+	evmctl sign -o -a sha256 --imahash --uid $APPRAISE_FOWNER --key $key_path test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}evmctl failed${NORM}"
+		return $FAIL
+	fi
+
+	chown $APPRAISE_FOWNER test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}chown failed${NORM}"
+		return $FAIL
+	fi
+
+	check_load_ima_rule "$APPRAISE_RULE"
+	result=$?
+	if [ $result -ne $OK ]; then
+		return $result
+	fi
+
+	chmod 644 test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}chmod failed${NORM}"
+		return $FAIL
+	fi
+
+	cat test-file &> /dev/null
+	if [ $? -eq 0 ]; then
+		echo "${RED}cat error expected${NORM}"
+		return $FAIL
+	fi
+
+	chmod 600 test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}chmod failed${NORM}"
+		return $FAIL
+	fi
+
+	cat test-file > /dev/null
+	if [ $? -ne 0 ]; then
+		echo "${RED}cat failed${NORM}"
+		return $FAIL
+	fi
+
+	if [ -f /usr/bin/chcon ]; then
+		label=$(ls -lZ test-file | awk '{print $5}')
+
+		chcon -t null_device_t test-file
+		if [ $? -ne 0 ]; then
+			echo "${RED}chcon failed${NORM}"
+			return $FAIL
+		fi
+
+		cat test-file &> /dev/null
+		if [ $? -eq 0 ]; then
+			echo "${RED}cat error expected${NORM}"
+			return $FAIL
+		fi
+
+		chcon $label test-file
+		if [ $? -ne 0 ]; then
+			echo "${RED}chcon failed${NORM}"
+			return $FAIL
+		fi
+
+		cat test-file > /dev/null
+		if [ $? -ne 0 ]; then
+			echo "${RED}cat failed${NORM}"
+			return $FAIL
+		fi
+	fi
+
+	ima_xattr=$(getfattr -m security.ima -d -e hex test-file | grep -v file)
+	ima_xattr=${ima_xattr#security.ima=}
+	if [ -z "$ima_xattr" ]; then
+		echo "${RED}security.ima not found${NORM}"
+		return $FAIL
+	fi
+
+	last_char=${ima_xattr: -1}
+	((last_char += 1))
+	((last_char %= 10))
+	ima_xattr_new=${ima_xattr:0:-1}$last_char
+
+	setfattr -n security.ima -v $ima_xattr_new test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}setfattr failed${NORM}"
+		return $FAIL
+	fi
+
+	cat test-file &> /dev/null
+	if [ $? -eq 0 ]; then
+		echo "${RED}cat error expected${NORM}"
+		return $FAIL
+	fi
+
+	setfattr -n security.ima -v $ima_xattr test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}setfattr failed${NORM}"
+		return $FAIL
+	fi
+
+	cat test-file > /dev/null
+	if [ $? -ne 0 ]; then
+		echo "${RED}cat failed${NORM}"
+		return $FAIL
+	fi
+
+	return $OK
+}
+
+cleanup_evm_revalidate() {
+	rm -f test-file
+}
+
+# Requires:
+# evm: Ignore INTEGRITY_NOLABEL if no HMAC key is loaded
+# evm: Introduce evm_status_revalidate()
+# ima: Allow imasig requirement to be satisfied by EVM portable signatures
+# evm: Execute evm_inode_init_security() only when an HMAC key is loaded
+check_evm_portable_sig_ima_appraisal() {
+	if [ $evm_value -ne 6 ]; then
+		echo "${CYAN}SKIP: EVM mode 6 required${NORM}"
+		return $SKIP
+	fi
+
+	echo "test" > test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}echo failed${NORM}"
+		return $FAIL
+	fi
+
+	chmod 600 test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}chmod failed${NORM}"
+		return $FAIL
+	fi
+
+	evmctl sign -o -a sha256 --imahash --uid $APPRAISE_DIGSIG_FOWNER --key $key_path test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}evmctl failed${NORM}"
+		return $FAIL
+	fi
+
+	chown $APPRAISE_DIGSIG_FOWNER test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}chown failed${NORM}"
+		return $FAIL
+	fi
+
+	check_load_ima_rule "$APPRAISE_DIGSIG_RULE"
+	result=$?
+	if [ $result -ne $OK ]; then
+		return $result
+	fi
+
+	cat test-file > /dev/null
+	if [ $? -ne 0 ]; then
+		echo "${RED}cat failed${NORM}"
+		return $FAIL
+	fi
+
+	echo "test" 2> /dev/null >> test-file
+	if [ $? -eq 0 ]; then
+		echo "${RED}echo error expected${NORM}"
+		return $FAIL
+	fi
+
+	tar --xattrs-include=* -cf test-archive.tar test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}tar failed${NORM}"
+		return $FAIL
+	fi
+
+	mkdir out
+
+	tar --xattrs-include=* -xf test-archive.tar -C out
+	if [ $? -ne 0 ]; then
+		echo "${RED}tar failed${NORM}"
+		return $FAIL
+	fi
+
+	xattr=$(getfattr -m security.selinux -d out/test-file)
+	if [ -z "$xattr" ]; then
+		echo "${RED}security.selinux not found${NORM}"
+		return $FAIL
+	fi
+
+	xattr=$(getfattr -m security.ima -d out/test-file)
+	if [ -z "$xattr" ]; then
+		echo "${RED}security.ima not found${NORM}"
+		return $FAIL
+	fi
+
+	xattr=$(getfattr -m security.evm -d out/test-file)
+	if [ -z "$xattr" ]; then
+		echo "${RED}security.evm not found${NORM}"
+		return $FAIL
+	fi
+
+	return $OK
+}
+
+cleanup_evm_portable_sig_ima_appraisal() {
+	rm -f test-file test-archive.tar
+	rm -Rf out
+}
+
+# Requires:
+# ima: Introduce template field evmsig and write to field sig as fallback
+# evm: Execute evm_inode_init_security() only when an HMAC key is loaded
+check_evm_portable_sig_ima_measurement_list() {
+	echo "test" > test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}echo failed${NORM}"
+		return $FAIL
+	fi
+
+	chown $MEASURE_FOWNER test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}chown failed${NORM}"
+		return $FAIL
+	fi
+
+	evmctl sign -o -a sha256 --imahash --key $key_path test-file
+	if [ $? -ne 0 ]; then
+		echo "${RED}evmctl failed${NORM}"
+		return $FAIL
+	fi
+
+	check_load_ima_rule "$MEASURE_RULE"
+	result=$?
+	if [ $result -ne $OK ]; then
+		return $result
+	fi
+
+	cat test-file > /dev/null
+	if [ $? -ne 0 ]; then
+		echo "${RED}cat failed${NORM}"
+		return $FAIL
+	fi
+
+	evm_sig_fs=$(getfattr -m security.evm -d -e hex test-file | awk '$0 ~ /^security.evm=/ {split($0, line, "="); print line[2]}')
+	if [ -z "$evm_sig_fs" ]; then
+		echo "${RED}security.ima not found${NORM}"
+		return $FAIL
+	fi
+
+	evm_sig_list=$(cat /sys/kernel/security/ima/ascii_runtime_measurements | awk '$6 == '"$evm_sig_fs")
+	if [ -z "$evm_sig_list" ]; then
+		echo "${RED}security.evm mismatch${NORM}"
+		return $FAIL
+	fi
+
+	return $OK
+}
+
+cleanup_evm_portable_sig_ima_measurement_list() {
+	rm -f test-file
+}
+
+if [ ! -f "signing_key.pem" ]; then
+	echo "Kernel signing key in certs/ directory of kernel sources is necessary for this test"
+	exit "$SKIP"
+fi
+
+key_path="$PWD/signing_key.pem"
+key_path_der=${key_path%.pem}.der
+
+dd if=/dev/zero of=test.img bs=1M count=10 &> /dev/null
+if [ $? -ne 0 ]; then
+	echo "Cannot create test image"
+	exit "$SKIP"
+fi
+
+dev=$(losetup -f test.img --show)
+if [ -z "$dev" ]; then
+	echo "Cannot create loop device"
+	exit "$SKIP"
+fi
+
+mkfs.ext4 -U $IMA_UUID $dev &> /dev/null
+mount -o i_version $dev /mnt
+
+ima_keyring=$(cat /proc/keys | awk '$9 == ".ima:" { print $1 }')
+evm_keyring=$(cat /proc/keys | awk '$9 == ".evm:" { print $1 }')
+
+if [ -z "$ima_keyring" ] || [ -z "$evm_keyring" ]; then
+	echo ".ima/.evm keyrings not found"
+	exit "$SKIP"
+fi
+
+openssl x509 -in signing_key.pem --out signing_key.der -outform der
+
+ima_keyring_empty=$(cat /proc/keys | awk '$9 == ".ima:" && $10 == "empty" { print $1 }')
+if [ -n "$ima_keyring_empty" ]; then
+	cat signing_key.der | keyctl padd asymmetric pubkey 0x$ima_keyring &> /dev/null
+fi
+
+pushd /mnt > /dev/null
+
+evm_value=$(cat /sys/kernel/security/evm)
+
+expect_pass check_ima_sig_appraisal
+cleanup_ima_sig_appraisal
+expect_pass check_ima_sig_ima_measurement_list
+cleanup_ima_sig_ima_measurement_list
+
+if ! (( $evm_value & 2 )) && [ "$EVM_CHANGE_MODE" -eq 1 ]; then
+	cat $key_path_der | keyctl padd asymmetric pubkey 0x$evm_keyring &> /dev/null
+	if [ $? -ne 0 ]; then
+		echo "Public key cannot be added to the EVM keyring"
+		exit "$SKIP"
+	fi
+
+	echo 2 > /sys/kernel/security/evm
+	evm_value=$(cat /sys/kernel/security/evm)
+fi
+
+expect_pass check_create_file
+cleanup_create_file
+expect_pass check_cp_preserve_xattrs
+cleanup_cp_preserve_xattrs
+expect_pass check_tar_extract_xattrs_different_owner
+cleanup_tar_extract_xattrs_different_owner
+expect_pass check_tar_extract_xattrs_same_owner
+cleanup_tar_extract_xattrs_same_owner
+expect_pass check_metadata_change
+cleanup_metadata_change
+expect_pass check_enable_metadata_modification
+expect_pass check_evm_revalidate
+cleanup_evm_revalidate
+expect_pass check_evm_portable_sig_ima_appraisal
+cleanup_evm_portable_sig_ima_appraisal
+expect_pass check_evm_portable_sig_ima_measurement_list
+cleanup_evm_portable_sig_ima_measurement_list
