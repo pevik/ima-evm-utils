@@ -8,24 +8,6 @@ services:
 
 matrix:
     include:
-        # 32 bit build
-        - os: linux
-          env: DISTRO=debian:stable VARIANT=i386 ARCH=i386 TSS=tpm2-tss
-          compiler: gcc
-
-        # cross compilation builds
-        - os: linux
-          env: DISTRO=debian:stable VARIANT=cross-compile ARCH=ppc64el TSS=ibmtss
-          compiler: powerpc64le-linux-gnu-gcc
-
-        - os: linux
-          env: DISTRO=debian:stable VARIANT=cross-compile ARCH=arm64 TSS=tpm2-tss
-          compiler: aarch64-linux-gnu-gcc
-
-        - os: linux
-          env: DISTRO=debian:stable VARIANT=cross-compile ARCH=s390x TSS=ibmtss
-          compiler: s390x-linux-gnu-gcc
-
         # musl
         - os: linux
           env: DISTRO=alpine:latest TSS=tpm2-tss
@@ -36,41 +18,10 @@ matrix:
           env: DISTRO=opensuse/tumbleweed TSS=ibmtss CONTAINER=podman CONTAINER_ARGS="--runtime=/usr/bin/runc"
           compiler: clang
 
-        - os: linux
-          env: DISTRO=opensuse/leap TSS=tpm2-tss
-          compiler: gcc
-
-        - os: linux
-          env: DISTRO=ubuntu:groovy TSS=ibmtss
-          compiler: gcc
-
-        - os: linux
-          env: DISTRO=ubuntu:xenial TSS=tpm2-tss
-          compiler: clang
-
-        - os: linux
-          env: DISTRO=fedora:latest TSS=ibmtss
-          compiler: clang
-
-        - os: linux
-          env: DISTRO=centos:7 TSS=tpm2-tss
-          compiler: gcc
-
-        - os: linux
-          env: DISTRO=centos:latest TSS=tpm2-tss
-          compiler: clang
-
-        - os: linux
-          env: DISTRO=debian:testing TSS=tpm2-tss
-          compiler: clang
-
-        - os: linux
-          env: DISTRO=debian:stable TSS=ibmtss
-          compiler: gcc
-
 before_install:
     # Tumbleweed requires podman and newest runc due docker incompatible with glibc 2.33 (faccessat2)
     - CONTAINER="${CONTAINER:-docker}"
+    - conf="/etc/docker/daemon.json"
     - >
         if [ "$CONTAINER" = "podman" ]; then
             # podman
@@ -79,10 +30,25 @@ before_install:
             wget -nv https://download.opensuse.org/repositories/devel:kubic:libcontainers:stable/xUbuntu_${VERSION_ID}/Release.key -O- | sudo apt-key add -
             sudo apt update
             sudo apt -y install podman slirp4netns
+            conf="/etc/containers/registries.conf"
 
             # runc
             sudo curl -L https://github.com/opencontainers/runc/releases/download/v1.0.0-rc93/runc.amd64 -o /usr/bin/runc
             sudo chmod +x /usr/bin/runc
+        fi
+
+    # Docker Hub pull rate limit workaround
+    - ls -la $conf || true
+    - echo ==== $conf ====; cat $conf || true; echo ==== end $conf ====; echo
+    - tmp=$(mktemp)
+    - sudo jq '."registry-mirrors" += ["https://mirror.gcr.io"]' $conf > $tmp
+    - sudo mv $tmp $conf
+    - ls -la $conf || true
+    - echo ==== $conf ====; cat $conf || true; echo ==== end $conf ====; echo
+    - >
+        if [ "$CONTAINER" = "docker" ]; then
+            sudo systemctl daemon-reload
+            sudo systemctl restart docker
         fi
     - $CONTAINER info
 
